@@ -1,0 +1,14 @@
+# Slack
+slack-bolt>=1.21.0          # Bolt for Python (Assistant, Socket Mode)
+slack-sdk>=3.33.0
+
+# Anthropic (MCP extras for tool_runner over a local stdio MCP session)
+anthropic[mcp]>=0.40.0
+
+# MCP server (accessibility scoring)
+mcp>=1.2.0                  # FastMCP lives here
+textstat>=0.7.4            # Flesch-Kincaid grade for score_readability
+
+# Utils
+httpx>=0.27.0              # download url_private_download bytes
+python-dotenv>=1.0.0
