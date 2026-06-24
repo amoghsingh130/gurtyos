@@ -1,9 +1,15 @@
 """Real-Time Search (RTS): assistant.search.context.
 
-No-storage rule: query at request time, persist nothing from results. The
-action_token must come from the triggering Assistant user_message event.
+Verified against docs.slack.dev (2026-06-24):
+- Bot-token calls REQUIRE `action_token`, taken from the triggering event payload
+  (message / app_mention). User-token calls don't need it.
+- Bot scope: search:read.public (search:read.files / search:read.users optional).
+- channel_types values: public_channel, private_channel, mpim, im (default public_channel).
+- content_types values: messages, files, channels, users (default messages).
+- before/after are INTEGER unix timestamps. limit max 20. Cursor pagination via
+  response_metadata.next_cursor.
 
-Pin exact param names against docs.slack.dev on Day 1 — these are best-guess.
+No-storage rule: query at request time, persist nothing from results.
 """
 from __future__ import annotations
 
@@ -14,21 +20,40 @@ def search_context(
     action_token: str,
     content_types: list[str] | None = None,
     channel_types: list[str] | None = None,
-    after: str | None = None,
-) -> str:
-    """Return a flattened text context for digest synthesis. Stores nothing."""
-    # TODO Day 1: confirm method name + params (action_token requirement,
-    # content_types=["messages","files"], channel_types, timeframe `after`).
-    resp = client.api_call(
-        "assistant.search.context",
-        params={
-            "query": query,
-            "action_token": action_token,
-            "content_types": content_types or ["messages", "files"],
-            **({"channel_types": channel_types} if channel_types else {}),
-            **({"after": after} if after else {}),
-        },
-    )
+    after: int | None = None,
+    before: int | None = None,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict:
+    """Raw assistant.search.context response (stores nothing)."""
+    params: dict = {
+        "query": query,
+        "action_token": action_token,
+        "content_types": content_types or ["messages", "files"],
+        "limit": min(limit, 20),
+    }
+    if channel_types:
+        params["channel_types"] = channel_types
+    if after is not None:
+        params["after"] = after
+    if before is not None:
+        params["before"] = before
+    if cursor:
+        params["cursor"] = cursor
+
+    return client.api_call("assistant.search.context", params=params)
+
+
+def flatten_results(resp: dict) -> str:
+    """Shape results.messages/files into a plain-text block for digest synthesis.
+    Uses only the fields the API documents: content, author_name, channel_name,
+    permalink (messages) and title/content (files)."""
     results = resp.get("results", {})
-    # TODO: shape this into the text block digest.synthesize expects.
-    return str(results)
+    lines: list[str] = []
+    for m in results.get("messages", []):
+        who = m.get("author_name", "someone")
+        where = m.get("channel_name", "")
+        lines.append(f"[#{where}] {who}: {m.get('content', '')}")
+    for f in results.get("files", []):
+        lines.append(f"[file] {f.get('title', '')}: {f.get('content', '')}")
+    return "\n".join(lines)

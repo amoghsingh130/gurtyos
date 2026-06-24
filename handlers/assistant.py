@@ -31,15 +31,32 @@ def register(app: App, settings: Settings) -> None:
             ]
         )
 
+    # Verified handler args (docs.slack.dev, Bolt-Python Assistant class):
+    #   client, context, get_thread_context, logger, payload, say, set_status
     @assistant.user_message
-    def on_user_message(payload, client, set_status, say, context):
-        # action_token for RTS bot-token path comes from the triggering event.
-        # TODO: action_token = payload/context -> slack_io.rts.search_context(...)
-        #       set_status("Reading the channel...")  # plan/task-step streaming
-        #       llm.digest.synthesize(rts_results, prefs) (streamed)
-        #       slack_io.canvas.create_accessible_digest(...) -> link
-        #       say(canvas link)
-        set_status("is thinking...")
+    def on_user_message(payload, client, set_status, say, context, logger):
+        # Bot-token RTS calls REQUIRE action_token; it arrives top-level in the
+        # triggering event payload (format "xact-1-..."). Confirm the key against
+        # a live event the first time — docs say "in the payload" but don't print it.
+        action_token = payload.get("action_token")
+
+        set_status("is thinking...")  # assistant.threads.setStatus
+
+        # TODO wire-up:
+        #   resp = slack_io.rts.search_context(client, payload["text"], action_token, ...)
+        #   ctx  = slack_io.rts.flatten_results(resp)
+        #   For the streamed "watch it work" UX, open a stream and emit task_update
+        #   chunks while synthesizing, then attach the canvas link + feedback blocks
+        #   on stop:
+        #     start = client.api_call("chat.startStream",
+        #               params={"channel": ch, "thread_ts": thread, "task_display_mode": "plan"})
+        #     ts = start["ts"]
+        #     client.api_call("chat.appendStream", params={"channel": ch, "message_ts": ts,
+        #               "thread_ts": thread, "chunks": [blocks.task_update_chunk("Reading channel", "in_progress")]})
+        #     digest_md = llm.digest.synthesize(settings, ctx, prefs.target_grade, prefs.language)
+        #     canvas_id = slack_io.canvas.create_accessible_digest(client, title, digest_md, channel_id=ch)
+        #     client.api_call("chat.stopStream", params={"channel": ch, "message_ts": ts,
+        #               "thread_ts": thread, "blocks": blocks.feedback_buttons(f"{ch}:{ts}")})
         raise NotImplementedError
 
     app.use(assistant)
