@@ -26,9 +26,12 @@ def synthesize(
     target_grade: int = 6,
     language: str = "English",
     on_token=None,
+    guard=None,
 ) -> str:
     """Return the digest markdown. If on_token is given, stream partial text to it
     (e.g. to drive task-step status updates in the Assistant panel)."""
+    if guard is not None:
+        guard.check()  # raises BudgetExceeded if over the spend ceiling / daily cap
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     user = (
         f"Reading grade: {target_grade}. Language: {language}.\n\n"
@@ -47,5 +50,7 @@ def synthesize(
             out.append(text)
             if on_token:
                 on_token(text)
-        stream.get_final_message()
+        final = stream.get_final_message()
+    if guard is not None:
+        guard.record(settings.model_digest, final.usage)
     return "".join(out)
