@@ -2,7 +2,32 @@
 
 **Platform:** Devpost — https://slackhack.devpost.com
 **Sponsor:** Salesforce, Inc. · **Administrator:** Devpost, Inc.
-**Status:** Direction chosen + full build plan ready. **Not started building.** (Greenfield repo — only this file.)
+**Status:** Built. **All three core flows work live against the sandbox.** Both required techs (MCP + RTS) load-bearing. See Progress below. (Original plan kept intact further down.)
+
+---
+
+## Progress (updated 2026-06-25)
+
+**Working end-to-end against the Developer Program sandbox:**
+- 👁️ **alt-text reacji** — react `:eyes:` on an image → Claude vision → threaded reply.
+- **Proactive offer** — post an image without alt text → ephemeral "Describe this image?" button → same path (the agentic beat).
+- 🧩 **plain-language rewrite** — react `:jigsaw:` on a thread → rewrite + **MCP readability before/after** (verified grade 24.7 → 7.7). MCP scorer reached over a real stdio client→server session (genuinely load-bearing).
+- **"Catch me up, accessibly"** — Assistant pane → **RTS `assistant.search.context`** → accessible digest (short sentences, headed sections, glossary, no color-only meaning) → **Slack canvas** (`canvases.create`).
+
+**Env / build facts:**
+- Python **3.12** venv at `.venv` (system 3.9 too old for MCP). Deps in `requirements.txt`.
+- `scripts/check_env.py` = pre-flight (placeholder guard + Anthropic/Slack auth). All green.
+- Cost guardrails: `guardrails.py` SQLite `cost.db` ledger, $8 ceiling, 300 calls/day. Dev on Haiku (~$0.0003–0.0004/call); digest on Opus. ~$10 Anthropic credit; $8 console spend limit recommended.
+- Slack-app config required: scopes (`reactions:read`,`files:read`,`chat:write`,`assistant:write`,`search:read.public`,`canvases:write`,`channels:history`,`im:history`), app-level token (`connections:write`), event subs (`reaction_added`,`message.channels`,`message.im`), Socket Mode ON, Interactivity ON, Agents & AI Apps ON, App Home Messages tab ON + allow messages.
+
+**Runtime gotchas (cost real debugging — don't relearn):**
+1. Built-in Socket Mode client → tight `BrokenPipeError [Errno 32]` reconnect loop on macOS; fix = `from slack_bolt.adapter.socket_mode.websocket_client import SocketModeHandler` (+ `websocket-client` dep). Events never reach handlers while it loops.
+2. Run **exactly one** `app.py` — multiple instances make Slack round-robin events across sockets. `pkill -f "python app.py"` does NOT match (process shows resolved `/opt/.../Python app.py` path) — kill by PID.
+3. RTS `action_token` is at `payload["assistant_thread"]["action_token"]` (not top-level).
+
+**Remaining:** streamed plan/task steps (`chat.startStream`) for the Assistant money-shot; prefs language-switch demo beat; seed a text-rich demo channel; quiet debug logs; architecture diagram; record <3-min video; write submission copy (USER's voice); submit early.
+
+**Commits through `43c9c4b`.** Full original build plan: `~/.claude/plans/okay-it-is-imperative-lively-goblet.md`.
 
 ---
 
