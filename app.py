@@ -22,11 +22,12 @@ def build_app() -> tuple[App, str]:
     app = App(token=settings.slack_bot_token)
 
     # Register feature handlers (each module attaches its own listeners).
-    from handlers import reactions, proactive, assistant
+    from handlers import reactions, proactive, assistant, home
 
     reactions.register(app, settings)
     proactive.register(app, settings)
     assistant.register(app, settings)
+    home.register(app, settings)
 
     return app, settings.slack_app_token
 

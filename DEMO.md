@@ -1,4 +1,4 @@
-# Demo & Submission Framing — Slack Accessibility Co-pilot
+# Demo & Submission Framing — gurtYos (Slack accessibility co-pilot)
 
 Everything here flows from one positioning. Lead with a person, prove with the number,
 escalate to org-scale, close on inevitability — and say the tech depth and the stakes out
@@ -51,7 +51,7 @@ playback** (judges *hear* the before/after) and the **scale-of-problem opener**.
 
 ## 2 · Devpost submission copy
 
-**Title:** Accessibility Co-pilot — *Slack, made readable for the teammates it leaves behind.*
+**Title:** gurtYos — *Slack, made readable for the teammates it leaves behind.*
 
 **Inspiration.**
 One in four adults lives with a disability, yet the tools we work in every day weren't built
