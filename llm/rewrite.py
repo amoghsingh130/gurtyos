@@ -1,37 +1,49 @@
-"""Plain-language rewrite with a measurable readability before/after.
+"""Plain-language rewrite as an agentic self-audit loop.
 
-Pipeline (all three steps run per request):
-  1. score the original via the custom MCP scorer  -> grade_before
-  2. Claude rewrites at the user's target grade / language
-  3. score the rewrite via the MCP scorer          -> grade_after
+The agent (Claude via `tool_runner`) drafts a rewrite, then calls the custom
+accessibility MCP tools (`audit_accessibility` / `score_readability`) to check its
+own draft, and revises until it meets the reader's target grade. This makes MCP
+genuinely load-bearing: the tools *drive the agent's behavior*, they don't just
+decorate the output.
 
-The MCP scorer (mcp_server/server.py) is reached over a real stdio client→server
-session, so MCP is genuinely load-bearing — not a library import. Scoring both
-ends deterministically guarantees the before/after numbers on ANY content (the
-reliability point of this concept), independent of model behavior.
+Two numbers are reported deterministically (independent of model behavior) by
+scoring the original and the final rewrite directly, so the on-screen "grade
+X → Y" is always trustworthy — the reliability point of this concept.
 
-The MCP SDK is async, so the work runs in a private event loop via asyncio.run();
-the Slack handler calls the sync `plain_language()` wrapper.
+Shared loop plumbing lives in `llm/mcp_agent.py`. The MCP SDK is async, so the
+work runs in a private event loop via asyncio.run(); Slack handlers call the sync
+`plain_language()` wrapper.
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 from dataclasses import dataclass
 
-import anthropic
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from pydantic import BaseModel
 
 from config import Settings
+from llm import mcp_agent
 
 REWRITE_SYSTEM = (
     "You rewrite jargon-heavy Slack threads into plain language for neurodivergent "
     "and ESL readers. Preserve every concrete fact, name, number, decision, and "
-    "action item — simplify the wording, never the substance. Short sentences. "
-    "Define unavoidable terms inline. Output only the rewrite, no preamble."
+    "action item — simplify the wording, never the substance.\n\n"
+    "Work like an editor with a checker: draft a rewrite, then call the "
+    "`audit_accessibility` tool on your draft. If it reports a reading grade above "
+    "the target, overly long sentences, undefined jargon, or color-only references, "
+    "revise and check again. Keep iterating until the draft meets the target.\n\n"
+    "When you are done, reply with ONLY the final rewrite — no preamble, no scores, "
+    "no commentary about your process."
 )
+
+MAX_ITERATIONS = 6  # safety cap on the agent's draft / audit / revise turns
+
+
+class _FinalRewrite(BaseModel):
+    """API-enforced shape for the agent's final answer — guarantees we get the
+    rewrite alone, with no 'here is my rewrite…' preamble leaking onto screen."""
+
+    text: str
 
 
 @dataclass
@@ -40,6 +52,7 @@ class RewriteResult:
     grade_before: float
     grade_after: float
     language: str
+    tool_calls: int = 0  # how many times the agent audited/scored its own draft
 
 
 def plain_language(
@@ -48,57 +61,36 @@ def plain_language(
     target_grade: int = 6,
     language: str = "English",
     guard=None,
+    on_step=None,
 ) -> RewriteResult:
+    """Sync entry point for Slack handlers. `on_step(tool_name)` is called for each
+    tool the agent invokes (lets a caller surface live task steps)."""
     if guard is not None:
         guard.check()  # raises BudgetExceeded if over the spend ceiling / daily cap
-    return asyncio.run(_run(settings, original, target_grade, language, guard))
+    return asyncio.run(_run(settings, original, target_grade, language, guard, on_step))
 
 
-async def _run(settings, original, target_grade, language, guard) -> RewriteResult:
-    # Launch our FastMCP scorer as a subprocess and talk to it over stdio.
-    server = StdioServerParameters(command=sys.executable, args=["-m", "mcp_server.server"])
-    async with stdio_client(server) as (read, write):
-        async with ClientSession(read, write) as mcp:
-            await mcp.initialize()
-            grade_before = await _score(mcp, original)
-            rewrite = _rewrite(settings, original, target_grade, language, guard)
-            grade_after = await _score(mcp, rewrite)
+async def _run(settings, original, target_grade, language, guard, on_step) -> RewriteResult:
+    async with mcp_agent.mcp_session() as mcp:
+        # Deterministic before-score — the trustworthy on-camera number.
+        grade_before = await mcp_agent.score_grade(mcp, original)
+
+        tools = await mcp_agent.agent_tools(mcp)
+        user = (
+            f"Rewrite the following Slack thread at roughly a US grade-{target_grade} "
+            f"reading level, in {language}. Use the accessibility tools to check and "
+            f"improve your draft before you finish.\n\n{original}"
+        )
+        text, tool_calls = await mcp_agent.run_loop(
+            settings, model=settings.model_rewrite, system=REWRITE_SYSTEM, user=user,
+            tools=tools, output_model=_FinalRewrite, field="text",
+            max_tokens=1500, max_iterations=MAX_ITERATIONS, guard=guard, on_step=on_step,
+        )
+
+        # Deterministic after-score on the agent's final rewrite.
+        grade_after = await mcp_agent.score_grade(mcp, text)
+
     return RewriteResult(
-        text=rewrite, grade_before=grade_before, grade_after=grade_after, language=language
+        text=text, grade_before=grade_before, grade_after=grade_after,
+        language=language, tool_calls=tool_calls,
     )
-
-
-async def _score(mcp: ClientSession, text: str) -> float:
-    """Call the MCP score_readability tool and pull out the Flesch-Kincaid grade."""
-    res = await mcp.call_tool("score_readability", {"text": text})
-    sc = getattr(res, "structuredContent", None)
-    if isinstance(sc, dict):
-        if "grade" in sc:
-            return float(sc["grade"])
-        inner = sc.get("result")
-        if isinstance(inner, dict) and "grade" in inner:
-            return float(inner["grade"])
-    for block in getattr(res, "content", []) or []:
-        txt = getattr(block, "text", None)
-        if txt:
-            return float(json.loads(txt)["grade"])
-    raise RuntimeError("MCP scorer returned no grade")
-
-
-def _rewrite(settings: Settings, original: str, target_grade: int, language: str, guard) -> str:
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    msg = client.messages.create(
-        model=settings.model_rewrite,
-        max_tokens=1500,
-        system=REWRITE_SYSTEM,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"Rewrite the following at roughly a US grade-{target_grade} reading level, "
-                f"in {language}.\n\n{original}"
-            ),
-        }],
-    )
-    if guard is not None:
-        guard.record(settings.model_rewrite, msg.usage)
-    return "".join(b.text for b in msg.content if b.type == "text").strip()

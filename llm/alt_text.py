@@ -17,7 +17,9 @@ ALT_TEXT_PROMPT = (
 def describe(settings: Settings, image_bytes: bytes, media_type: str, guard=None) -> str:
     if guard is not None:
         guard.check()  # raises BudgetExceeded if over the spend ceiling / daily cap
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = anthropic.Anthropic(
+        api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries
+    )
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     msg = client.messages.create(
         model=settings.model_alt_text,

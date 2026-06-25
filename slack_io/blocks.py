@@ -55,3 +55,21 @@ def alt_text_offer(value: str) -> list[dict]:
             },
         }
     ]
+
+
+def rewrite_offer(value: str) -> list[dict]:
+    """Ephemeral proactive offer to post a plain-language version of a hard thread."""
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": "This thread may be hard to read for some teammates. "
+                             "Post a plain-language version? 🧩"},
+            "accessory": {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Post plain version"},
+                "action_id": "offer_rewrite",
+                "value": value,
+            },
+        }
+    ]

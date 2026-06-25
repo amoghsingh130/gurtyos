@@ -44,16 +44,25 @@ def register(app: App, settings: Settings) -> None:
         elif emoji == REWRITE_EMOJI:
             _handle_rewrite(client, settings, guard, prefs, channel, ts, user=event.get("user"))
 
-    # Acknowledge feedback buttons so clicks don't dangle (record can come later).
+    # 👍 is a positive signal — log it (a small grade nudge up could go here later).
     @app.action("feedback_up")
     def _fb_up(ack, body, logger):
         ack()
         log.info("feedback 👍 on %s", body["actions"][0].get("value"))
 
+    # 👎 closes the loop: lower this user's reading grade and re-render the SAME
+    # message simpler, in place — a visibly learning agent, not a logged shrug.
     @app.action("feedback_down")
-    def _fb_down(ack, body, logger):
+    def _fb_down(ack, body, client, logger):
         ack()
-        log.info("feedback 👎 on %s", body["actions"][0].get("value"))
+        value = body["actions"][0].get("value")          # "channel:ts" of the source thread
+        user = (body.get("user") or {}).get("id")
+        msg_channel = (body.get("channel") or {}).get("id")
+        msg_ts = (body.get("container") or {}).get("message_ts")
+        if not (value and msg_channel and msg_ts):
+            log.info("feedback 👎 missing context, can't re-render (%s)", value)
+            return
+        _rerender_simpler(client, settings, guard, prefs, value, user, msg_channel, msg_ts)
 
 
 def run_alt_text(client, settings: Settings, guard: Guardrails, channel: str, ts: str) -> None:
@@ -115,14 +124,66 @@ def _handle_rewrite(client, settings: Settings, guard: Guardrails, prefs: PrefsS
             channel=channel, thread_ts=ts, text="⚠️ Couldn't rewrite that thread.")
         return
 
+    text_out, blocks_out = _rewrite_message(result, f"{channel}:{ts}")
+    client.chat_postMessage(channel=channel, thread_ts=ts, text=text_out, blocks=blocks_out)
+
+
+def _rewrite_message(result, feedback_value: str, *, note: str = "") -> tuple[str, list[dict]]:
+    """Build the (fallback text, blocks) for a rewrite result. Shared by the first
+    post and the 👎 re-render so both render identically. `note` appends an italic
+    aside to the header (e.g. 'simplified after your feedback')."""
     lang = "" if result.language.lower() == "english" else f", {result.language}"
+    # Surface the agentic beat: the rewrite came from a draft→audit→revise loop, not
+    # a single shot. (Text carries the meaning — emoji stays decorative, dogfooding a11y.)
+    revised = (f"  ·  _the agent audited & revised its draft {result.tool_calls}×_"
+               if result.tool_calls else "")
+    aside = f"  ·  _{note}_" if note else ""
     header = (f"🧩 *Plain-language rewrite*  ·  reading grade "
-              f"{result.grade_before:.0f} → {result.grade_after:.0f}{lang}")
-    client.chat_postMessage(
-        channel=channel, thread_ts=ts,
-        text=f"{header}\n\n{result.text}",
-        blocks=[
-            {"type": "section", "text": {"type": "mrkdwn", "text": header}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": result.text}},
-            *blocks.feedback_buttons(f"{channel}:{ts}"),
-        ])
+              f"{result.grade_before:.0f} → {result.grade_after:.0f}{lang}{revised}{aside}")
+    blocks_out = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": header}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": result.text}},
+        *blocks.feedback_buttons(feedback_value),
+    ]
+    return f"{header}\n\n{result.text}", blocks_out
+
+
+def _rerender_simpler(client, settings: Settings, guard: Guardrails, prefs: PrefsStore,
+                      value: str, user: str | None, msg_channel: str, msg_ts: str) -> None:
+    """👎 handler: lower the user's reading grade, persist it, re-rewrite the source
+    thread at the lower grade, and chat_update the SAME message in place."""
+    try:
+        channel, ts = value.split(":", 1)
+    except ValueError:
+        log.info("feedback 👎 unparseable value %r", value)
+        return
+
+    p = prefs.get(user) if user else prefs.get("")
+    new_grade = max(3, p.target_grade - 2)   # step toward simpler; floor at grade 3
+    if user:
+        prefs.set(user, target_grade=new_grade)  # remembered for this user's future rewrites
+    log.info("feedback 👎 → grade %s→%s for %s", p.target_grade, new_grade, user)
+
+    try:
+        thread = messages.fetch_thread(client, channel, ts)
+    except Exception:
+        log.exception("couldn't refetch thread %s/%s for re-render", channel, ts)
+        return
+    text = messages.thread_text(thread)
+    if not text.strip():
+        return
+
+    try:
+        result = rewrite.plain_language(
+            settings, text, target_grade=new_grade, language=p.language, guard=guard)
+    except BudgetExceeded as e:
+        client.chat_update(channel=msg_channel, ts=msg_ts,
+                           text=f"⚠️ Couldn't simplify further — spend guardrail tripped ({e}).")
+        return
+    except Exception:
+        log.exception("re-render rewrite failed for %s/%s", channel, ts)
+        return
+
+    text_out, blocks_out = _rewrite_message(
+        result, value, note=f"simplified to grade {new_grade} after your feedback")
+    client.chat_update(channel=msg_channel, ts=msg_ts, text=text_out, blocks=blocks_out)

@@ -35,5 +35,13 @@ def reading_time(text: str) -> dict:
     return {"reading_seconds": scoring.reading_seconds(text)}
 
 
+@mcp.tool()
+def audit_accessibility(text: str) -> dict:
+    """Full accessibility audit of `text`: reading grade, reading time, overly long
+    sentences, undefined jargon/acronyms, and color-only references. The agent uses
+    these concrete findings to revise its draft until it is accessible."""
+    return scoring.audit(text)
+
+
 if __name__ == "__main__":
     mcp.run()

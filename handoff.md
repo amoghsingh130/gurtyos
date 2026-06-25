@@ -3,6 +3,7 @@
 **Platform:** Devpost — https://slackhack.devpost.com
 **Sponsor:** Salesforce, Inc. · **Administrator:** Devpost, Inc.
 **Status:** Built. **All three core flows work live against the sandbox.** Both required techs (MCP + RTS) load-bearing. See Progress below. (Original plan kept intact further down.)
+**Strategy (2026-06-25):** sharpened to **win the For-Good track outright ($8k)** — see *Plan to Win* below. Full detail: `~/.claude/plans/okay-look-at-the-twinkling-treasure.md`.
 
 ---
 
@@ -25,9 +26,83 @@
 2. Run **exactly one** `app.py` — multiple instances make Slack round-robin events across sockets. `pkill -f "python app.py"` does NOT match (process shows resolved `/opt/.../Python app.py` path) — kill by PID.
 3. RTS `action_token` is at `payload["assistant_thread"]["action_token"]` (not top-level).
 
-**Remaining:** streamed plan/task steps (`chat.startStream`) for the Assistant money-shot; prefs language-switch demo beat; seed a text-rich demo channel; quiet debug logs; architecture diagram; record <3-min video; write submission copy (USER's voice); submit early.
+**Remaining:** now organized as the *Plan to Win* workstreams below (money-shot streaming, personalization, adaptive feedback, Channel Accessibility Report, eval harness + all-3-techs flex, truth-up, then artifacts/video/submission).
 
 **Commits through `43c9c4b`.** Full original build plan: `~/.claude/plans/okay-it-is-imperative-lively-goblet.md`.
+
+---
+
+## Plan to Win — First Place (updated 2026-06-25)
+
+**Goal sharpened:** not "a solid submission" but **win the Agent-for-Good track outright ($8,000)**.
+Two verified prize rules reframe everything:
+- **One prize per submission** — *"A winning Eligible Submission may only win one (1) Prize… First/
+  Second Prize winners are not eligible to receive an Achievement prize."* The old "two shots (For-Good
+  1st OR Best UX)" hedge is **dead** — commit fully to best-in-track; an achievement prize is only a
+  consolation we back into, never the target.
+- **Tie-break = Technological Implementation** (the first listed criterion) — in a close race **tech
+  decides**, so it's effectively the highest-weighted criterion. Over-invest there (it was our weakest).
+- **Track:** stay **Agent for Good** (no Marketplace gate; RTS works via the internal sandbox app;
+  stickiest narrative). Organizations is least-crowded but its Marketplace gate likely conflicts with
+  RTS's internal-app requirement — too risky solo in the time.
+
+**North star: the demo is the product.** Design the <3-min video first; build backward to it. Bar: if we
+don't win, a judge actively preferred someone else's work — we left no points on the table.
+
+**Build progress (session 2, 2026-06-25) — agentic loop + money-shot landed:**
+- ✅ **Self-audit agent loop (WS1a)** — `llm/rewrite.py` *and* `llm/digest.py` now run a `tool_runner`
+  draft→audit→revise loop over the MCP scorer (shared plumbing in `llm/mcp_agent.py`). MCP is genuinely
+  load-bearing + agentic; verified live (rewrite grade 18→6 with the agent self-auditing; digest 3 audit
+  passes → grade 6.0, clean headed markdown + glossary).
+- ✅ **Enriched MCP server (WS2)** — added `audit_accessibility` (grade, long sentences, jargon,
+  color-only refs, contrast) alongside `score_readability`/`wcag_contrast`.
+- ✅ **Agentic signal in the reacji thread (WS3)** — 🧩 reply shows "the agent audited & revised its
+  draft N×". (`config.py:51`'s `tool_runner` comment is now actually true.)
+- ✅ **Money-shot streaming built (WS3)** — `slack_io/stream.py` (chat.startStream / appendStream /
+  stopStream, `task_display_mode="plan"`) + `handlers/assistant.py` streams plan/task steps and surfaces
+  each audit pass. **Gated behind `ENABLE_TASK_STREAM` (default off)** until live-tested in a sandbox
+  Assistant thread; when off it degrades to `set_status` + a posted digest (always works).
+- ✅ **Tests (WS2/WS4)** — `tests/` (16 passing): scoring fns, the agent extraction helper, a real MCP
+  stdio round-trip, the guardrails ledger. `pytest` added to `requirements.txt`.
+- ⏭️ **Still open:** live-test + flip on the stream; personalization write-path (`PrefsStore.set` is still
+  dead) + adaptive 👍/👎 feedback; Channel Accessibility Report; eval harness (rewrite faithfulness);
+  swap demo models to Opus; WS5 artifacts / video / submission.
+
+> Pinned this session: `beta.messages.tool_runner` + `async_mcp_tool` (anthropic 0.112.0); Assistant
+> streaming shapes (`chat.startStream` `task_update` chunks); slack_sdk 3.42 exposes
+> `chat_startStream`/`appendStream`/`stopStream` + `canvases_*`.
+
+**Workstreams** (full detail in `~/.claude/plans/okay-look-at-the-twinkling-treasure.md`):
+- **WS0 — Demo script & critical path (FIRST).** Lock the wow beats. Critical path = scale-of-problem
+  opener → 🧩 rewrite with visible **draft→audit→revise** steps → "Catch me up" streaming plan/task steps →
+  **Channel Accessibility Report** canvas → personalization + adaptive feedback. **Free technique:** play
+  alt text/digest through **VoiceOver** so judges *hear* the before/after.
+- **WS1 — Signature wows:** (a) the **self-auditing agent loop** (agentic `tool_runner` over the MCP a11y
+  toolset: draft→audit→revise; keep one deterministic final score for the on-camera number) is THE story;
+  (b) **dogfood accessibility** — every message/block/canvas the agent emits is itself screen-reader-perfect;
+  (c) **Channel Accessibility Report** — audit a whole channel → an A11y-score canvas (e.g. 42→96) with
+  missing-alt-text %, avg grade, contrast/color flags + an **ADA/508 compliance** framing (impact *beyond*
+  the community).
+- **WS2 — Tech ceiling (tie-breaker):** name & prove **all three techs load-bearing** (Assistant + MCP loop
+  + RTS; most entrants use one); publish the scorer as a **standalone reusable MCP server**; ship an **eval
+  harness** (alt-text accuracy, rewrite *faithfulness* / no dropped facts, readability delta); add
+  retry/backoff + ledger-as-observability; enrich the MCP server with `audit_accessibility`.
+- **WS3 — Money-shot + personalization + adaptive feedback:** plan-blocks/task-steps (`chat.startStream`);
+  wire the dead `PrefsStore.set` (`prefs/store.py:41`) via Assistant message-parse ("now in Spanish"); wire
+  the dead 👍/👎 (`reactions.py:48`) so 👎 lowers the grade and **re-renders simpler** (a learning agent).
+- **WS4 — Truth-up:** real `effort`/thinking in `digest.py` (resolve the `:41` TODO); remove stale
+  `tool_runner` comments (`config.py:51`); reconcile README/handoff; Opus for the demo; scope the proactive
+  offer to a demo channel.
+- **WS5 — Scored artifacts (early):** impact statement (receipts + before/after + ADA/508); architecture
+  diagram (agentic loop + 3 techs); seed a text-rich channel; **living jargon glossary via RTS**
+  (second-tier, first to cut); record the video; submission copy in your voice; grant test access; submit early.
+
+**Cut line (protect the critical path):** WS0 → WS3 → WS1(a)(b) → WS1(c) Channel Report → WS2 → WS4 →
+proactive polish → **living glossary** → extra MCP tools → test breadth. **Never let the video or impact
+statement slip.**
+
+**Scope warning:** core demo + four ceiling-raisers, solo, ~18 days. Ship the critical path at 100% *before*
+any add-on — first place is won by the critical path + one/two signature wows, not five things at 70%.
 
 ---
 
@@ -35,11 +110,11 @@
 - **Track:** **Slack Agent for Good** ($8k / $4k).
 - **Concept (working label, you name the final):** an **accessibility co-pilot for Slack itself** — an agent
   that fixes Slack's own inaccessibility for blind/low-vision, neurodivergent, and ESL users.
-- **Why this one:** highest *expected* win — it can take **For-Good 1st OR the Best UX achievement prize**
-  (two shots), the demo is visceral and works on arbitrary content (robust to off-script judges), the impact
-  story is unimpeachable (accessibility is an explicitly listed area), and it's a **less-crowded track** than
-  the marquee "New Slack Agent." Hardened so **two of the three required techs (RTS + MCP) are load-bearing**,
-  which erases its one weakness (tech ceiling) vs the runner-up idea.
+- **Why this one:** highest *expected* win — the demo is visceral and works on arbitrary content (robust to
+  off-script judges), the impact story is unimpeachable (accessibility is an explicitly listed area), and it's
+  a **less-crowded track** than the marquee "New Slack Agent." Now hardened so **all three required techs
+  (Assistant + MCP + RTS) are load-bearing**, which targets the Tech-Implementation tie-break head-on.
+  *(Note: one prize per submission — see Plan to Win — so we commit to winning the track, not hedging to Best UX.)*
 - **Three load-bearing flows:** (1) **alt-text** on images via Claude vision (reacji + proactive), (2)
   **plain-language rewrite** of jargon threads with a **measurable readability before/after** from a custom
   **accessibility-scoring MCP server**, (3) **"Catch me up, accessibly"** — an Assistant-panel agent that uses
