@@ -20,6 +20,7 @@ def search_context(
     action_token: str,
     content_types: list[str] | None = None,
     channel_types: list[str] | None = None,
+    context_channel_id: str | None = None,
     after: int | None = None,
     before: int | None = None,
     limit: int = 20,
@@ -34,6 +35,8 @@ def search_context(
     }
     if channel_types:
         params["channel_types"] = channel_types
+    if context_channel_id:
+        params["context_channel_id"] = context_channel_id
     if after is not None:
         params["after"] = after
     if before is not None:
