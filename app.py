@@ -7,7 +7,9 @@ from __future__ import annotations
 import logging
 
 from slack_bolt import App
-from slack_bolt.adapter.socket_mode import SocketModeHandler
+# websocket-client backend — the built-in Socket Mode client is prone to a
+# BrokenPipe reconnect loop on macOS; this adapter is stable.
+from slack_bolt.adapter.socket_mode.websocket_client import SocketModeHandler
 
 from config import load_settings
 

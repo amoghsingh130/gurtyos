@@ -1,6 +1,7 @@
 # Slack
 slack-bolt>=1.21.0          # Bolt for Python (Assistant, Socket Mode)
 slack-sdk>=3.33.0
+websocket-client>=1.8.0    # stable Socket Mode backend (avoids builtin BrokenPipe loop)
 
 # Anthropic (MCP extras for tool_runner over a local stdio MCP session)
 anthropic[mcp]>=0.40.0
