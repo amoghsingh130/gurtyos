@@ -36,15 +36,20 @@ _REPORT_RE = re.compile(r"(accessibilit(?:y|ies)|a11y)\s+(report|score|audit|che
                         re.IGNORECASE)
 
 
-def _channel_name(client, query: str, channel_id: str) -> str:
-    """Human channel name from the <#C…|name> mention, else conversations.info."""
+def _channel_label(client, query: str, channel_id: str) -> str:
+    """Display label for the audited channel: '#name' from the <#C…|name> mention or
+    conversations.info, else a graceful 'this channel' (resolving the name needs the
+    channels:read scope, which the app may not have)."""
     m = re.search(r"<#C[A-Z0-9]+\|([^>]+)>", query)
-    if m:
-        return m.group(1)
+    if m and m.group(1).strip():
+        return f"#{m.group(1).strip()}"
     try:
-        return client.conversations_info(channel=channel_id)["channel"]["name"]
+        name = (client.conversations_info(channel=channel_id).get("channel") or {}).get("name")
+        if name:
+            return f"#{name}"
     except Exception:
-        return channel_id
+        log.info("conversations_info failed for %s (add channels:read for a name)", channel_id)
+    return "this channel"
 
 # Natural-language personalization. The Assistant lets users *tell* the agent how to
 # adapt ("now in Spanish", "set my reading level to 5"); we persist it so every future
@@ -97,30 +102,30 @@ def _run_channel_report(client, settings: Settings, query: str, set_status, say)
         say("Tell me which channel to audit, e.g. *accessibility report on #general*.")
         return
     target = m.group(1)
-    name = _channel_name(client, query, target)
+    label = _channel_label(client, query, target)
 
-    set_status(f"Scanning #{name} for accessibility issues")
+    set_status(f"Scanning {label} for accessibility issues")
     try:
-        msgs = messages.fetch_recent(client, target, limit=150)
+        msgs = messages.fetch_recent(client, target, limit=150)  # includes thread replies
     except Exception:
         log.exception("couldn't read channel %s for report", target)
-        say(f"⚠️ I couldn't read #{name} — make sure I've been invited to it.")
+        say(f"⚠️ I couldn't read {label} — make sure I've been invited to it.")
         return
 
     rep = scoring.channel_report(msgs)
-    md = canvas.accessibility_report_markdown(name, rep)
+    md = canvas.accessibility_report_markdown(label, rep)
 
     set_status("Building the accessibility report canvas")
     try:
         canvas_id = canvas.create_accessible_digest(
-            client, f"Accessibility report — #{name}", md, channel_id=target)
+            client, f"Accessibility report — {label}", md, channel_id=target)
         canvas_note = f"\n\n📄 Saved as an accessible canvas (id `{canvas_id}`)."
     except Exception:
         log.exception("report canvas creation failed — posting summary only")
         canvas_note = ""
 
     say(
-        f"📋 *Accessibility report for #{name}* — score "
+        f"📋 *Accessibility report for {label}* — score "
         f"*{rep['score_before']} → {rep['score_after']}* once I apply my fixes.\n"
         f"Scanned {rep['messages_scanned']} messages: "
         f"{rep['missing_alt']} of {rep['total_images']} images missing alt text, "

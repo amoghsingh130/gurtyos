@@ -24,8 +24,23 @@ def thread_text(messages: list[dict]) -> str:
     return "\n\n".join(m.get("text", "") for m in messages if m.get("text"))
 
 
-def fetch_recent(client, channel: str, limit: int = 100) -> list[dict]:
-    """Recent messages in `channel` (with their `files`), newest first. Used by
-    the channel accessibility report. Needs channels:history / files:read."""
+def fetch_recent(client, channel: str, limit: int = 100, include_replies: bool = True) -> list[dict]:
+    """Recent messages in `channel` (with their `files`), newest first — plus thread
+    replies when `include_replies` (conversations.history returns only top-level
+    messages, so replies need a per-thread fetch). Used by the channel accessibility
+    report. Needs channels:history / files:read."""
     resp = client.conversations_history(channel=channel, limit=min(limit, 200))
-    return resp.get("messages", [])
+    msgs = resp.get("messages", [])
+    if not include_replies:
+        return msgs
+    out = list(msgs)
+    for m in msgs:
+        # Only thread parents carry reply_count; pull their replies (skip the parent dup).
+        if m.get("reply_count") and m.get("ts") and m.get("thread_ts", m["ts"]) == m["ts"]:
+            try:
+                replies = client.conversations_replies(
+                    channel=channel, ts=m["ts"], limit=50).get("messages", [])
+                out.extend(r for r in replies if r.get("ts") != m["ts"])
+            except Exception:
+                pass  # one unreadable thread shouldn't sink the whole report
+    return out

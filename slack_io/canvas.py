@@ -23,14 +23,15 @@ def create_accessible_digest(client, title: str, markdown: str, channel_id: str)
     return resp["canvas_id"]
 
 
-def accessibility_report_markdown(channel_name: str, rep: dict) -> str:
+def accessibility_report_markdown(channel_label: str, rep: dict) -> str:
     """Screen-reader-friendly markdown for a Channel Accessibility Report canvas.
-    `rep` is the dict from mcp_server.scoring.channel_report. Plain language, headed
-    sections, no color/emoji-only meaning — the agent dogfoods its own a11y rules."""
+    `channel_label` is a display label like '#general' or 'this channel'. `rep` is the
+    dict from mcp_server.scoring.channel_report. Plain language, headed sections, no
+    color/emoji-only meaning — the agent dogfoods its own a11y rules."""
     alt_pct = (round(100 * rep["missing_alt"] / rep["total_images"])
                if rep["total_images"] else 0)
     return (
-        f"# Accessibility report — #{channel_name}\n\n"
+        f"# Accessibility report — {channel_label}\n\n"
         f"## Accessibility score: {rep['score_before']} out of 100\n"
         f"If the agent applies its fixes, this channel reaches "
         f"**{rep['score_after']} out of 100**.\n\n"
