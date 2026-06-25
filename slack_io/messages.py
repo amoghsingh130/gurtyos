@@ -22,3 +22,10 @@ def fetch_thread(client, channel: str, ts: str) -> list[dict]:
 def thread_text(messages: list[dict]) -> str:
     """Flatten thread messages into plain text for rewrite/scoring."""
     return "\n\n".join(m.get("text", "") for m in messages if m.get("text"))
+
+
+def fetch_recent(client, channel: str, limit: int = 100) -> list[dict]:
+    """Recent messages in `channel` (with their `files`), newest first. Used by
+    the channel accessibility report. Needs channels:history / files:read."""
+    resp = client.conversations_history(channel=channel, limit=min(limit, 200))
+    return resp.get("messages", [])

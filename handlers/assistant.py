@@ -23,13 +23,28 @@ from slack_bolt import App, Assistant
 from config import Settings
 from guardrails import Guardrails, BudgetExceeded
 from llm import digest
+from mcp_server import scoring
 from prefs.store import PrefsStore
-from slack_io import canvas, rts
+from slack_io import canvas, messages, rts
 from slack_io.stream import TaskStream
 
 log = logging.getLogger("handlers.assistant")
 
 _CHANNEL_MENTION = re.compile(r"<#(C[A-Z0-9]+)(?:\|[^>]*)?>")
+# "accessibility report on #general", "a11y score", "audit #general"
+_REPORT_RE = re.compile(r"(accessibilit(?:y|ies)|a11y)\s+(report|score|audit|check)|\baudit\b",
+                        re.IGNORECASE)
+
+
+def _channel_name(client, query: str, channel_id: str) -> str:
+    """Human channel name from the <#C…|name> mention, else conversations.info."""
+    m = re.search(r"<#C[A-Z0-9]+\|([^>]+)>", query)
+    if m:
+        return m.group(1)
+    try:
+        return client.conversations_info(channel=channel_id)["channel"]["name"]
+    except Exception:
+        return channel_id
 
 # Natural-language personalization. The Assistant lets users *tell* the agent how to
 # adapt ("now in Spanish", "set my reading level to 5"); we persist it so every future
@@ -72,6 +87,49 @@ def _parse_pref_updates(query: str, current) -> tuple[dict, str | None]:
     return updates, "Got it — " + ", ".join(notes) + "."
 
 
+def _run_channel_report(client, settings: Settings, query: str, set_status, say) -> None:
+    """Audit a whole channel into a single accessibility score (before → projected
+    after) and a screen-reader-friendly canvas. Uses the same deterministic scorer
+    the MCP server exposes, so the on-camera number is trustworthy. No RTS token
+    needed — reads channel history directly."""
+    m = _CHANNEL_MENTION.search(query)
+    if not m:
+        say("Tell me which channel to audit, e.g. *accessibility report on #general*.")
+        return
+    target = m.group(1)
+    name = _channel_name(client, query, target)
+
+    set_status(f"Scanning #{name} for accessibility issues")
+    try:
+        msgs = messages.fetch_recent(client, target, limit=150)
+    except Exception:
+        log.exception("couldn't read channel %s for report", target)
+        say(f"⚠️ I couldn't read #{name} — make sure I've been invited to it.")
+        return
+
+    rep = scoring.channel_report(msgs)
+    md = canvas.accessibility_report_markdown(name, rep)
+
+    set_status("Building the accessibility report canvas")
+    try:
+        canvas_id = canvas.create_accessible_digest(
+            client, f"Accessibility report — #{name}", md, channel_id=target)
+        canvas_note = f"\n\n📄 Saved as an accessible canvas (id `{canvas_id}`)."
+    except Exception:
+        log.exception("report canvas creation failed — posting summary only")
+        canvas_note = ""
+
+    say(
+        f"📋 *Accessibility report for #{name}* — score "
+        f"*{rep['score_before']} → {rep['score_after']}* once I apply my fixes.\n"
+        f"Scanned {rep['messages_scanned']} messages: "
+        f"{rep['missing_alt']} of {rep['total_images']} images missing alt text, "
+        f"{rep['jargon_walls']} jargon-heavy messages, average reading grade "
+        f"{rep['avg_grade']} (target {rep['target_grade']})."
+        f"{canvas_note}"
+    )
+
+
 def register(app: App, settings: Settings) -> None:
     assistant = Assistant()
     guard = Guardrails(settings)
@@ -82,6 +140,7 @@ def register(app: App, settings: Settings) -> None:
         say("Hi — I can catch you up accessibly. Name a channel or paste a thread.")
         set_suggested_prompts(prompts=[
             {"title": "Catch me up accessibly", "message": "Catch me up accessibly on #general"},
+            {"title": "Accessibility report", "message": "Accessibility report on #general"},
             {"title": "Explain this simply", "message": "Explain the latest discussion simply"},
         ])
 
@@ -90,6 +149,12 @@ def register(app: App, settings: Settings) -> None:
     @assistant.user_message
     def on_user_message(payload, client, context, set_status, say, logger):
         query = (payload.get("text") or "").strip()
+
+        # Channel accessibility report — the org-scale beat. Reads history directly,
+        # so it works even when RTS isn't enabled; handle it before the RTS path.
+        if _REPORT_RE.search(query):
+            _run_channel_report(client, settings, query, set_status, say)
+            return
 
         # Bot-token RTS calls REQUIRE action_token. Confirmed location (2026-06-25):
         # the message event's assistant_thread carries it.

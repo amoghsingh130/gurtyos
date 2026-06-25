@@ -90,3 +90,84 @@ def audit(text: str) -> dict:
         "color_only_refs": color_only_refs(text),
         "contrast_fails": [],  # populated by the channel/image path when colors are known
     }
+
+
+# --- Channel-level accessibility report -----------------------------------
+# Aggregates the per-text heuristics above across a whole channel into one
+# 0–100 accessibility score, plus a projected score if the agent's fixes were
+# applied. Deterministic and pure so the on-camera before/after number is
+# trustworthy and unit-testable — the same scorer the MCP server exposes.
+
+REPORT_TARGET_GRADE = 8       # plain-language target for the channel as a whole
+_JARGON_WALL_TOKENS = 3       # ≥ this many jargon tokens makes a message a "wall"
+_JARGON_WALL_GRADE = 14.0     # …or a reading grade this high
+
+
+def _a11y_score(*, total_images, missing_alt, has_text, avg_grade,
+                jargon_walls, color_refs, target_grade=REPORT_TARGET_GRADE) -> int:
+    """Weighted 0–100 accessibility score. Missing alt text is the heaviest
+    penalty (a hard barrier for screen-reader users); reading grade, jargon
+    walls, and color-only meaning follow."""
+    s = 100.0
+    if total_images:
+        s -= 45.0 * (missing_alt / total_images)          # screen-reader barrier
+    if has_text:
+        s -= min(30.0, max(0.0, avg_grade - target_grade) * 3.0)  # readability
+    s -= min(20.0, jargon_walls * 4.0)                    # undefined jargon
+    s -= min(5.0, color_refs * 2.0)                       # color-only meaning
+    return max(0, round(s))
+
+
+def channel_report(messages: list[dict], target_grade: int = REPORT_TARGET_GRADE) -> dict:
+    """Aggregate accessibility report for a channel's recent messages.
+
+    `messages` are raw Slack message dicts (each may have `text` and `files`).
+    Returns counts, a current `score_before`, and a `score_after` projecting the
+    score once the agent's auto-fixes (alt text, plain-language rewrites) land —
+    color-only/contrast issues are flagged but not assumed auto-fixed, so `after`
+    stays honest rather than a perfect 100."""
+    texts = [
+        m.get("text", "") for m in messages
+        if (m.get("text") or "").strip() and not m.get("subtype")
+    ]
+    images = [
+        f for m in messages for f in (m.get("files") or [])
+        if (f.get("mimetype") or "").startswith("image/")
+    ]
+    total_images = len(images)
+    missing_alt = sum(1 for f in images if not (f.get("alt_txt") or "").strip())
+
+    graded = [flesch_kincaid_grade(t) for t in texts if len(t.split()) >= 12]
+    avg_grade = round(sum(graded) / len(graded), 1) if graded else 0.0
+    jargon_walls = sum(
+        1 for t in texts
+        if len(jargon_candidates(t)) >= _JARGON_WALL_TOKENS
+        or flesch_kincaid_grade(t) >= _JARGON_WALL_GRADE
+    )
+    color_refs = sum(len(color_only_refs(t)) for t in texts)
+
+    before = _a11y_score(
+        total_images=total_images, missing_alt=missing_alt, has_text=bool(graded),
+        avg_grade=avg_grade, jargon_walls=jargon_walls, color_refs=color_refs,
+        target_grade=target_grade)
+    # Projected: the agent describes every image and rewrites every wall to target;
+    # color-only refs remain flagged-but-unfixed. Cap at 97 (never below the current
+    # score) — auto-generated alt text still warrants a human pass, so a literal 100
+    # would overclaim.
+    after = _a11y_score(
+        total_images=total_images, missing_alt=0, has_text=bool(graded),
+        avg_grade=float(target_grade), jargon_walls=0, color_refs=color_refs,
+        target_grade=target_grade)
+    after = max(before, min(97, after))
+
+    return {
+        "messages_scanned": len(messages),
+        "total_images": total_images,
+        "missing_alt": missing_alt,
+        "avg_grade": avg_grade,
+        "jargon_walls": jargon_walls,
+        "color_only_refs": color_refs,
+        "score_before": before,
+        "score_after": after,
+        "target_grade": target_grade,
+    }

@@ -2,6 +2,48 @@
 from mcp_server import scoring
 
 
+def _img(alt=""):
+    return {"mimetype": "image/png", "alt_txt": alt}
+
+
+def test_channel_report_messy_scores_low_and_improves():
+    msgs = [
+        {"text": "hey team lunch in 10"},
+        {"text": "", "files": [_img(), _img()]},          # 2 images, no alt text
+        {"text": ("Per the SLA the API KPIs must be reconciled against the EOD ETL "
+                  "pipeline before the QBR notwithstanding the aforementioned "
+                  "dependencies that materially impact downstream deliverables.")},  # jargon wall
+        {"text": "see the items marked in red for the blockers"},  # color-only
+    ]
+    rep = scoring.channel_report(msgs)
+    assert rep["messages_scanned"] == 4
+    assert rep["total_images"] == 2 and rep["missing_alt"] == 2
+    assert rep["jargon_walls"] >= 1
+    assert rep["color_only_refs"] >= 1
+    # A channel with no alt text + jargon should score poorly, and the projected
+    # post-fix score must be meaningfully higher.
+    assert rep["score_before"] < 70
+    assert rep["score_after"] > rep["score_before"]
+
+
+def test_channel_report_clean_scores_high():
+    msgs = [
+        {"text": "The team will meet at noon. Lunch is on the way."},
+        {"text": "", "files": [_img(alt="A bar chart of weekly sign-ups trending up.")]},
+        {"text": "Nice work shipping the fix. Tests pass."},
+    ]
+    rep = scoring.channel_report(msgs)
+    assert rep["missing_alt"] == 0
+    assert rep["score_before"] >= 90
+
+
+def test_channel_report_empty_is_safe():
+    rep = scoring.channel_report([])
+    assert rep["messages_scanned"] == 0
+    assert rep["total_images"] == 0
+    assert 0 <= rep["score_before"] <= 100
+
+
 def test_contrast_extremes():
     assert scoring.wcag_contrast("#000000", "#ffffff") == 21.0   # max contrast
     assert scoring.wcag_contrast("#777777", "#777777") == 1.0    # identical colors
