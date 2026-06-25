@@ -45,13 +45,10 @@ def register(app: App, settings: Settings) -> None:
     def on_user_message(payload, client, context, set_status, say, logger):
         query = (payload.get("text") or "").strip()
 
-        # Bot-token RTS calls REQUIRE action_token from the triggering event. Its
-        # exact key isn't documented; log the candidates on first run to confirm.
-        action_token = (payload.get("action_token")
-                        or context.get("action_token")
-                        or (context.get("assistant_thread") or {}).get("action_token"))
-        log.info("user_message keys=%s action_token_found=%s",
-                 sorted(payload.keys()), bool(action_token))
+        # Bot-token RTS calls REQUIRE action_token. Confirmed location (2026-06-25):
+        # the message event's assistant_thread carries it.
+        action_token = ((payload.get("assistant_thread") or {}).get("action_token")
+                        or payload.get("action_token"))
 
         if not action_token:
             say("⚠️ I couldn't get a search token for this thread — RTS may not be "
