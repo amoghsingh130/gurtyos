@@ -12,7 +12,9 @@ from slack_bolt import App
 
 from config import Settings
 from guardrails import Guardrails, BudgetExceeded
-from llm import alt_text
+from llm import alt_text, rewrite
+from prefs.store import PrefsStore
+from slack_io import blocks
 from slack_io import files as files_io
 from slack_io import messages
 
@@ -24,11 +26,13 @@ REWRITE_EMOJI = "jigsaw"     # 🧩
 
 def register(app: App, settings: Settings) -> None:
     guard = Guardrails(settings)
+    prefs = PrefsStore(settings.prefs_db_path)
 
     @app.event("reaction_added")
     def on_reaction_added(event, client, logger):
         emoji = event.get("reaction")
         item = event.get("item", {})
+        log.info("reaction_added: :%s: on %s", emoji, item.get("type"))
         if item.get("type") != "message":
             return
 
@@ -36,12 +40,25 @@ def register(app: App, settings: Settings) -> None:
         ts = item["ts"]
 
         if emoji == ALT_TEXT_EMOJI:
-            _handle_alt_text(client, settings, guard, channel, ts)
+            run_alt_text(client, settings, guard, channel, ts)
         elif emoji == REWRITE_EMOJI:
-            _handle_rewrite(client, settings, guard, channel, ts, user=event.get("user"))
+            _handle_rewrite(client, settings, guard, prefs, channel, ts, user=event.get("user"))
+
+    # Acknowledge feedback buttons so clicks don't dangle (record can come later).
+    @app.action("feedback_up")
+    def _fb_up(ack, body, logger):
+        ack()
+        log.info("feedback 👍 on %s", body["actions"][0].get("value"))
+
+    @app.action("feedback_down")
+    def _fb_down(ack, body, logger):
+        ack()
+        log.info("feedback 👎 on %s", body["actions"][0].get("value"))
 
 
-def _handle_alt_text(client, settings: Settings, guard: Guardrails, channel: str, ts: str) -> None:
+def run_alt_text(client, settings: Settings, guard: Guardrails, channel: str, ts: str) -> None:
+    """Describe every image on the message at channel/ts and reply in-thread.
+    Shared by the 👁️ reacji and the proactive offer button."""
     try:
         msg = messages.fetch_message(client, channel, ts)
     except LookupError:
@@ -71,9 +88,41 @@ def _handle_alt_text(client, settings: Settings, guard: Guardrails, channel: str
         client.chat_postMessage(channel=channel, thread_ts=ts, text=f"👁️ *Alt text:* {alt}")
 
 
-def _handle_rewrite(client, settings: Settings, guard: Guardrails,
+def _handle_rewrite(client, settings: Settings, guard: Guardrails, prefs: PrefsStore,
                     channel: str, ts: str, user: str | None) -> None:
-    # TODO (Days 8-9): fetch_thread -> prefs -> llm.rewrite.plain_language (MCP
-    # before/after via tool_runner) -> post in thread with feedback buttons.
-    log.info("rewrite requested for %s/%s by %s", channel, ts, user)
-    raise NotImplementedError
+    """Rewrite the reacted thread in plain language with an MCP grade before/after."""
+    try:
+        thread = messages.fetch_thread(client, channel, ts)
+    except Exception:
+        log.exception("couldn't fetch thread %s/%s", channel, ts)
+        return
+    text = messages.thread_text(thread)
+    if not text.strip():
+        return  # nothing to rewrite
+
+    p = prefs.get(user) if user else prefs.get("")
+    try:
+        result = rewrite.plain_language(
+            settings, text, target_grade=p.target_grade, language=p.language, guard=guard)
+    except BudgetExceeded as e:
+        client.chat_postMessage(
+            channel=channel, thread_ts=ts,
+            text=f"⚠️ Rewrite paused — spend guardrail tripped ({e}).")
+        return
+    except Exception:
+        log.exception("rewrite failed for %s/%s", channel, ts)
+        client.chat_postMessage(
+            channel=channel, thread_ts=ts, text="⚠️ Couldn't rewrite that thread.")
+        return
+
+    lang = "" if result.language.lower() == "english" else f", {result.language}"
+    header = (f"🧩 *Plain-language rewrite*  ·  reading grade "
+              f"{result.grade_before:.0f} → {result.grade_after:.0f}{lang}")
+    client.chat_postMessage(
+        channel=channel, thread_ts=ts,
+        text=f"{header}\n\n{result.text}",
+        blocks=[
+            {"type": "section", "text": {"type": "mrkdwn", "text": header}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": result.text}},
+            *blocks.feedback_buttons(f"{channel}:{ts}"),
+        ])
