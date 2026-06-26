@@ -1,34 +1,62 @@
 # Slack Agent Builder Challenge — Handoff
 
-**Platform:** Devpost — https://slackhack.devpost.com
-**Sponsor:** Salesforce, Inc. · **Administrator:** Devpost, Inc.
-**Status:** Built. **All three core flows work live against the sandbox.** Both required techs (MCP + RTS) load-bearing. See Progress below. (Original plan kept intact further down.)
-**Strategy (2026-06-25):** sharpened to **win the For-Good track outright ($8k)** — see *Plan to Win* below. Full detail: `~/.claude/plans/okay-look-at-the-twinkling-treasure.md`.
+**Platform:** Devpost — https://slackhack.devpost.com · **Sponsor:** Salesforce, Inc.
+**Project:** **gurtYos** — an accessibility co-pilot for Slack (For Good track).
+**Repo (public):** https://github.com/amoghsingh130/gurtyos
+**Status:** Feature-complete and tested. All flows work live against the sandbox; all three
+required techs (Assistant + custom MCP + RTS) are load-bearing. The product README is the
+current source of truth for setup/config; this file keeps the build log + the strategy.
 
 ---
 
 ## Progress (updated 2026-06-25)
 
 **Working end-to-end against the Developer Program sandbox:**
-- 👁️ **alt-text reacji** — react `:eyes:` on an image → Claude vision → threaded reply.
-- **Proactive offer** — post an image without alt text → ephemeral "Describe this image?" button → same path (the agentic beat).
-- 🧩 **plain-language rewrite** — react `:jigsaw:` on a thread → rewrite + **MCP readability before/after** (verified grade 24.7 → 7.7). MCP scorer reached over a real stdio client→server session (genuinely load-bearing).
-- **"Catch me up, accessibly"** — Assistant pane → **RTS `assistant.search.context`** → accessible digest (short sentences, headed sections, glossary, no color-only meaning) → **Slack canvas** (`canvases.create`).
+- 👁️ **alt-text reacji** + **proactive alt-text offer** (Claude vision).
+- 🧩 **plain-language rewrite** with **MCP readability before/after** + an impact line
+  (acronyms defined / sentences split). **👎 lowers the grade, persists it, and re-renders
+  simpler in place** (a visibly learning agent). **Natural-language prefs** ("now in Spanish",
+  "set my reading level to N") parsed + persisted.
+- **Proactive rewrite offer** — the agent watches `DEMO_CHANNELS` and offers to fix jargon
+  threads unprompted (deterministic, LLM-free screen).
+- **"Catch me up, accessibly"** — reads recent channel **history** for a named channel
+  (reliable) or **RTS** for topical/cross-channel; synthesizes an accessible **canvas**;
+  **streams the agent's audit passes live** (`ENABLE_TASK_STREAM` on by default, degrades to
+  status text).
+- **Channel Accessibility Report** — whole-channel score (current → projected-after-fixes,
+  ADA/508 framing) on a canvas, with a **"Fix this channel"** button that applies fixes
+  channel-wide (alt text + plain-language rewrites, capped per click).
+- **App Home** — a formatted, fully alt-texted intro + guide (`handlers/home.py`); banner at
+  `assets/home-banner.png`, hosted via GitHub raw.
 
 **Env / build facts:**
-- Python **3.12** venv at `.venv` (system 3.9 too old for MCP). Deps in `requirements.txt`.
-- `scripts/check_env.py` = pre-flight (placeholder guard + Anthropic/Slack auth). All green.
-- Cost guardrails: `guardrails.py` SQLite `cost.db` ledger, $8 ceiling, 300 calls/day. Dev on Haiku (~$0.0003–0.0004/call); digest on Opus. ~$10 Anthropic credit; $8 console spend limit recommended.
-- Slack-app config required: scopes (`reactions:read`,`files:read`,`chat:write`,`assistant:write`,`search:read.public`,`canvases:write`,`channels:history`,`im:history`), app-level token (`connections:write`), event subs (`reaction_added`,`message.channels`,`message.im`), Socket Mode ON, Interactivity ON, Agents & AI Apps ON, App Home Messages tab ON + allow messages.
+- Python **3.12** venv at `.venv`. `scripts/check_env.py` pre-flight. Guardrails: `guardrails.py`
+  SQLite `cost.db` ledger, $8 ceiling / 300 calls-day.
+- **Models:** digest = `claude-sonnet-4-6` (fast + separate capacity pool ⇒ fewer 529s; set
+  `MODEL_DIGEST=claude-opus-4-8` for the final recording); rewrite/alt-text = Haiku. All three
+  env-overridable. `ANTHROPIC_MAX_RETRIES=5` so transient 529s self-heal.
+- **Tests:** `pytest -q` → 43 fast offline (pure + integration via a fake Slack client in
+  `tests/fakes.py`); `RUN_LLM_TESTS=1 pytest tests/test_llm_integration.py` → live LLM/MCP.
 
 **Runtime gotchas (cost real debugging — don't relearn):**
-1. Built-in Socket Mode client → tight `BrokenPipeError [Errno 32]` reconnect loop on macOS; fix = `from slack_bolt.adapter.socket_mode.websocket_client import SocketModeHandler` (+ `websocket-client` dep). Events never reach handlers while it loops.
-2. Run **exactly one** `app.py` — multiple instances make Slack round-robin events across sockets. `pkill -f "python app.py"` does NOT match (process shows resolved `/opt/.../Python app.py` path) — kill by PID.
+1. Built-in Socket Mode client → `BrokenPipeError` reconnect loop on macOS; fix =
+   `slack_bolt.adapter.socket_mode.websocket_client.SocketModeHandler` (+ `websocket-client`).
+2. Run **exactly one** `app.py`. The process shows the resolved interpreter path, so match
+   case-insensitively: `pkill -if "python app.py"` (plain `-f "python app.py"` misses it).
 3. RTS `action_token` is at `payload["assistant_thread"]["action_token"]` (not top-level).
+4. **Catch-up retrieval:** RTS is a relevance *search* and starves a generic "catch me up"
+   query — named-channel catch-up reads `conversations.history` instead; RTS powers the
+   topical/no-channel path.
+5. **Anthropic 529 "overloaded"** is transient — handled by `max_retries`; a surviving one
+   shows a friendly message, never a blank canvas.
+6. `guardrails.calls_today()` must use **UTC** to match `record()` (local/UTC mismatch
+   under-counted in the evening).
 
-**Remaining:** now organized as the *Plan to Win* workstreams below (money-shot streaming, personalization, adaptive feedback, Channel Accessibility Report, eval harness + all-3-techs flex, truth-up, then artifacts/video/submission).
-
-**Commits through `43c9c4b`.** Full original build plan: `~/.claude/plans/okay-it-is-imperative-lively-goblet.md`.
+**Remaining (demo + submission, not code):** capture the 3 Home-tab feature screenshots →
+wire raw URLs; in Slack config rename the bot to gurtYos, enable the Home tab +
+`app_home_opened`, add `chat:write.customize` + `channels:read`, re-seed; record the <3-min
+video (`DEMO.md` script); finalize Devpost copy (your voice) + impact statement; grant test
+access to slackhack@salesforce.com + testing@devpost.com; submit early.
 
 ---
 
@@ -58,15 +86,18 @@ don't win, a judge actively preferred someone else's work — we left no points 
   color-only refs, contrast) alongside `score_readability`/`wcag_contrast`.
 - ✅ **Agentic signal in the reacji thread (WS3)** — 🧩 reply shows "the agent audited & revised its
   draft N×". (`config.py:51`'s `tool_runner` comment is now actually true.)
-- ✅ **Money-shot streaming built (WS3)** — `slack_io/stream.py` (chat.startStream / appendStream /
-  stopStream, `task_display_mode="plan"`) + `handlers/assistant.py` streams plan/task steps and surfaces
-  each audit pass. **Gated behind `ENABLE_TASK_STREAM` (default off)** until live-tested in a sandbox
-  Assistant thread; when off it degrades to `set_status` + a posted digest (always works).
-- ✅ **Tests (WS2/WS4)** — `tests/` (16 passing): scoring fns, the agent extraction helper, a real MCP
-  stdio round-trip, the guardrails ledger. `pytest` added to `requirements.txt`.
-- ⏭️ **Still open:** live-test + flip on the stream; personalization write-path (`PrefsStore.set` is still
-  dead) + adaptive 👍/👎 feedback; Channel Accessibility Report; eval harness (rewrite faithfulness);
-  swap demo models to Opus; WS5 artifacts / video / submission.
+- ✅ **Money-shot streaming (WS3)** — `slack_io/stream.py` + `handlers/assistant.py` stream plan/task
+  steps and surface each audit pass. **`ENABLE_TASK_STREAM` is now ON by default** (degrades to
+  `set_status` if the API is unavailable).
+- ✅ **Closed the loop (WS3)** — `PrefsStore.set` wired; 👎 lowers grade + re-renders simpler in place +
+  remembers; natural-language prefs ("now in Spanish" / "reading level N") parsed in the Assistant.
+- ✅ **Channel Accessibility Report (WS1c)** — whole-channel score (current→projected, ADA/508) on a
+  canvas + a **"Fix this channel"** button that applies fixes channel-wide.
+- ✅ **Concrete impact numbers** — rewrite shows acronyms-defined / sentences-split; digest shows reading
+  time. ✅ **App Home** intro/guide. ✅ **Reliability** — Sonnet digest, `max_retries`, friendly 529 +
+  empty-canvas + sparse-channel guards, UTC call-count fix, history-based catch-up.
+- ✅ **Tests** — 43 fast offline (pure + integration via a fake Slack client) + gated live LLM/MCP.
+- ⏭️ **Still open (demo + submission, not code):** see "Remaining" in Progress above.
 
 > Pinned this session: `beta.messages.tool_runner` + `async_mcp_tool` (anthropic 0.112.0); Assistant
 > streaming shapes (`chat.startStream` `task_update` chunks); slack_sdk 3.42 exposes
