@@ -92,6 +92,25 @@ def _parse_pref_updates(query: str, current) -> tuple[dict, str | None]:
     return updates, "Got it — " + ", ".join(notes) + "."
 
 
+def _content_words(ctx: str) -> int:
+    """Count words of real message content in a flattened context block — the text
+    after the 'who:' prefix on each line. Used to decline near-empty channels."""
+    return sum(len(ln.split(":", 1)[-1].split()) for ln in ctx.splitlines())
+
+
+def _history_context(msgs: list[dict]) -> str:
+    """Flatten recent channel history into a chronological '<who>: <text>' block for
+    the digest. conversations.history returns newest-first, so reverse it. Skips
+    join/leave and other subtype noise; uses the bot/display name when present."""
+    lines = []
+    for m in reversed(msgs):
+        text = (m.get("text") or "").strip()
+        if text and not m.get("subtype"):
+            who = m.get("username") or m.get("user") or "someone"
+            lines.append(f"{who}: {text}")
+    return "\n".join(lines)
+
+
 def _run_channel_report(client, settings: Settings, query: str, set_status, say) -> None:
     """Audit a whole channel into a single accessibility score (before → projected
     after) and a screen-reader-friendly canvas. Uses the same deterministic scorer
@@ -161,15 +180,6 @@ def register(app: App, settings: Settings) -> None:
             _run_channel_report(client, settings, query, set_status, say)
             return
 
-        # Bot-token RTS calls REQUIRE action_token. Confirmed location (2026-06-25):
-        # the message event's assistant_thread carries it.
-        action_token = ((payload.get("assistant_thread") or {}).get("action_token")
-                        or payload.get("action_token"))
-        if not action_token:
-            say("⚠️ I couldn't get a search token for this thread — RTS may not be "
-                "enabled for this app yet. (Check the logs for the payload keys.)")
-            return
-
         channel = payload.get("channel")
         thread_ts = payload.get("thread_ts")
 
@@ -195,26 +205,44 @@ def register(app: App, settings: Settings) -> None:
                 say(f"⚠️ {msg}")
 
         try:
-            progress("Searching the channel for recent activity", tid="search")
-            resp = rts.search_context(
-                client, query=query, action_token=action_token,
-                context_channel_id=context_channel_id)
-            if not resp.get("ok"):
-                finish_error(f"Search failed: `{resp.get('error', 'unknown')}`.")
-                return
-            ctx = rts.flatten_results(resp)
+            progress("Reading recent channel activity", tid="search")
+            if context_channel_id:
+                # Reliable retrieval for a named channel: pull its recent history (incl.
+                # thread replies). RTS is a relevance *search*, which starves a generic
+                # "catch me up" query — history is what this use case actually needs.
+                try:
+                    msgs = messages.fetch_recent(client, context_channel_id, limit=80)
+                except Exception:
+                    log.exception("history fetch failed for %s", context_channel_id)
+                    finish_error("I couldn't read that channel — make sure I've been "
+                                 "invited to it.")
+                    return
+                ctx = _history_context(msgs)
+            else:
+                # No channel named → topical search across the workspace via RTS (this is
+                # the search use case RTS is built for, and keeps it load-bearing).
+                action_token = ((payload.get("assistant_thread") or {}).get("action_token")
+                                or payload.get("action_token"))
+                if not action_token:
+                    finish_error("Name a channel to catch up on (e.g. #general), or enable "
+                                 "Real-Time Search so I can search across channels.")
+                    return
+                resp = rts.search_context(client, query=query, action_token=action_token)
+                if not resp.get("ok"):
+                    finish_error(f"Search failed: `{resp.get('error', 'unknown')}`.")
+                    return
+                ctx = rts.flatten_results(resp)
+
             if not ctx.strip():
                 finish_error("I didn't find recent messages to summarize for that.")
                 return
             # Decline cleanly on a near-empty channel instead of spending a call and
-            # publishing a canvas that just says "nothing to summarize". Count words of
-            # real message content (after the "[#chan] author:" prefix on each line).
-            content_words = sum(len(ln.split(":", 1)[-1].split()) for ln in ctx.splitlines())
-            if content_words < 12:
+            # publishing a canvas that just says "nothing to summarize".
+            if _content_words(ctx) < 12:
                 finish_error("There's not enough recent activity there to summarize yet. "
                              "Try a busier channel, or ask about a specific topic.")
                 return
-            progress("Searching the channel for recent activity", status="completed", tid="search")
+            progress("Reading recent channel activity", status="completed", tid="search")
 
             # Apply any natural-language personalization the user asked for ("now in
             # Spanish", "set my reading level to 5") and persist it for next time.
