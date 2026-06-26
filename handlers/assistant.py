@@ -206,6 +206,14 @@ def register(app: App, settings: Settings) -> None:
             if not ctx.strip():
                 finish_error("I didn't find recent messages to summarize for that.")
                 return
+            # Decline cleanly on a near-empty channel instead of spending a call and
+            # publishing a canvas that just says "nothing to summarize". Count words of
+            # real message content (after the "[#chan] author:" prefix on each line).
+            content_words = sum(len(ln.split(":", 1)[-1].split()) for ln in ctx.splitlines())
+            if content_words < 12:
+                finish_error("There's not enough recent activity there to summarize yet. "
+                             "Try a busier channel, or ask about a specific topic.")
+                return
             progress("Searching the channel for recent activity", status="completed", tid="search")
 
             # Apply any natural-language personalization the user asked for ("now in
