@@ -83,10 +83,10 @@ class Settings:
     max_calls_per_day: int = 300        # per-day call cap across all flows (loop backstop)
     cost_db_path: str = "cost.db"
 
-    # Assistant money-shot: stream plan/task steps via chat.startStream. Off by
-    # default until live-tested against a sandbox Assistant thread; when off, the
-    # flow degrades to set_status progress + a posted digest (always works).
-    enable_task_stream: bool = False
+    # Assistant money-shot: stream plan/task steps via chat.startStream so judges watch
+    # the agent audit its draft live. On by default; every streaming call is defensive
+    # and degrades to set_status progress + a posted digest if the API is unavailable.
+    enable_task_stream: bool = True
 
     # Proactive plain-language offer (the autonomy beat). Scoped to an allow-list of
     # channels so the agent never spams a real workspace; empty = the feature is off.
@@ -108,7 +108,7 @@ def load_settings() -> Settings:
         anthropic_max_retries=_int_env("ANTHROPIC_MAX_RETRIES", 5),
         max_spend_usd=_float_env("MAX_SPEND_USD", 8.0),
         max_calls_per_day=_int_env("MAX_CALLS_PER_DAY", 300),
-        enable_task_stream=_bool_env("ENABLE_TASK_STREAM", False),
+        enable_task_stream=_bool_env("ENABLE_TASK_STREAM", True),
         demo_channels=_list_env("DEMO_CHANNELS"),
         rewrite_offer_grade=_float_env("REWRITE_OFFER_GRADE", 12.0),
     )

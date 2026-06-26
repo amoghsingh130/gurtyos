@@ -126,6 +126,69 @@ def test_channel_report_requires_a_channel():
     assert "channel" in say.last.lower()
 
 
+def test_channel_report_offers_fix_button_when_issues_exist():
+    history = [{"ts": "2", "files": [_img()]},  # missing alt → there's something to fix
+               {"ts": "3", "text": "thanks all"}]
+    client = FakeSlackClient(history=history, channel_name="general")
+    say = Recorder()
+    assistant._run_channel_report(client, _settings(), "report on <#C1|general>", Recorder(), say)
+    assert say.any_block_action("fix_channel")   # the "Fix this channel" button is offered
+
+
+# --- assistant: "Fix this channel" applies fixes channel-wide ----------------
+
+def test_fix_channel_describes_images_and_rewrites_walls(monkeypatch):
+    history = [
+        {"ts": "10", "files": [_img()]},                       # image, no alt
+        {"ts": "11", "files": [_img(alt="already described")]},  # skip (has alt)
+        {"ts": "12", "text": ("Per the SLA the API KPIs must be reconciled against the EOD "
+                              "ETL pipeline before the QBR notwithstanding the aforementioned "
+                              "dependencies materially impacting downstream deliverables.")},
+        {"ts": "13", "text": "lgtm thanks"},                   # not a wall
+    ]
+    client = FakeSlackClient(history=history)
+    alt_called, rewrite_called = [], []
+    monkeypatch.setattr(assistant, "run_alt_text",
+                        lambda c, s, g, ch, ts: alt_called.append(ts))
+    monkeypatch.setattr(assistant, "_handle_rewrite",
+                        lambda c, s, g, p, ch, ts, user=None: rewrite_called.append(ts))
+    say = Recorder()
+    assistant._fix_channel(client, _settings(), None, None, "C1", "<#C1>", say)
+
+    assert alt_called == ["10"]          # only the un-alt-texted image
+    assert rewrite_called == ["12"]      # only the jargon wall
+    assert "Done" in say.last and "1" in say.last
+
+
+def test_fix_channel_noop_when_already_accessible(monkeypatch):
+    client = FakeSlackClient(history=[{"ts": "1", "text": "see you tomorrow"}])
+    monkeypatch.setattr(assistant, "run_alt_text", lambda *a, **k: pytest.fail("nothing to fix"))
+    monkeypatch.setattr(assistant, "_handle_rewrite", lambda *a, **k: pytest.fail("nothing to fix"))
+    say = Recorder()
+    assistant._fix_channel(client, _settings(), None, None, "C1", "<#C1>", say)
+    assert "already looks accessible" in say.last
+
+
+# --- impact numbers on the rewrite reply ------------------------------------
+
+def test_rewrite_message_shows_impact_numbers():
+    r = RewriteResult(text="Plain.", grade_before=22, grade_after=6, language="English",
+                      tool_calls=2, seconds_before=130, seconds_after=50,
+                      acronyms_defined=3, sentences_split=2)
+    body, blocks = reactions._rewrite_message(r, "C1:9.9")
+    ctx = [b for b in blocks if b["type"] == "context"]
+    assert ctx, "impact context block present"
+    txt = ctx[0]["elements"][0]["text"]
+    assert "2m 10s → 50s" in txt and "saved 1m 20s" in txt
+    assert "defined 3 acronyms" in txt and "split 2 long sentences" in txt
+
+
+def test_rewrite_message_impact_omitted_when_zero():
+    r = RewriteResult(text="x", grade_before=8, grade_after=7, language="English")
+    _body, blocks = reactions._rewrite_message(r, "C1:1")
+    assert not [b for b in blocks if b["type"] == "context"]
+
+
 # --- assistant: helpers -----------------------------------------------------
 
 def test_channel_label_from_mention_then_info_then_fallback():

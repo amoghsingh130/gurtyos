@@ -13,6 +13,7 @@ from slack_bolt import App
 from config import Settings
 from guardrails import Guardrails, BudgetExceeded
 from llm import alt_text, rewrite
+from mcp_server import scoring
 from prefs.store import PrefsStore
 from slack_io import blocks
 from slack_io import files as files_io
@@ -128,6 +129,26 @@ def _handle_rewrite(client, settings: Settings, guard: Guardrails, prefs: PrefsS
     client.chat_postMessage(channel=channel, thread_ts=ts, text=text_out, blocks=blocks_out)
 
 
+def _impact_line(result) -> str:
+    """Concrete, deterministic 'what this bought you' line for the rewrite. Plain
+    language is often *longer* (it defines terms), so only show reading time when it
+    genuinely dropped — the comprehension wins below carry the rest."""
+    parts = []
+    if result.seconds_before > result.seconds_after > 0:
+        saved = result.seconds_before - result.seconds_after
+        parts.append(
+            f"⏱️ reading time {scoring.format_reading_time(result.seconds_before)} → "
+            f"{scoring.format_reading_time(result.seconds_after)} "
+            f"(saved {scoring.format_reading_time(saved)})")
+    if result.acronyms_defined:
+        parts.append(f"defined {result.acronyms_defined} "
+                     f"acronym{'s' if result.acronyms_defined != 1 else ''}")
+    if result.sentences_split:
+        parts.append(f"split {result.sentences_split} long "
+                     f"sentence{'s' if result.sentences_split != 1 else ''}")
+    return "   ·   ".join(parts)
+
+
 def _rewrite_message(result, feedback_value: str, *, note: str = "") -> tuple[str, list[dict]]:
     """Build the (fallback text, blocks) for a rewrite result. Shared by the first
     post and the 👎 re-render so both render identically. `note` appends an italic
@@ -143,9 +164,13 @@ def _rewrite_message(result, feedback_value: str, *, note: str = "") -> tuple[st
     blocks_out = [
         {"type": "section", "text": {"type": "mrkdwn", "text": header}},
         {"type": "section", "text": {"type": "mrkdwn", "text": result.text}},
-        *blocks.feedback_buttons(feedback_value),
     ]
-    return f"{header}\n\n{result.text}", blocks_out
+    impact = _impact_line(result)
+    if impact:
+        blocks_out.append({"type": "context", "elements": [{"type": "mrkdwn", "text": impact}]})
+    blocks_out += blocks.feedback_buttons(feedback_value)
+    body = f"{header}\n\n{result.text}" + (f"\n\n{impact}" if impact else "")
+    return body, blocks_out
 
 
 def _rerender_simpler(client, settings: Settings, guard: Guardrails, prefs: PrefsStore,

@@ -44,6 +44,18 @@ def test_channel_report_empty_is_safe():
     assert 0 <= rep["score_before"] <= 100
 
 
+def test_format_reading_time():
+    assert scoring.format_reading_time(45) == "45s"
+    assert scoring.format_reading_time(130) == "2m 10s"
+    assert scoring.format_reading_time(60) == "1m 0s"
+
+
+def test_is_jargon_wall():
+    assert scoring.is_jargon_wall(
+        "Per the SLA the API KPIs must be reconciled against the EOD ETL pipeline.") is True
+    assert scoring.is_jargon_wall("see you tomorrow everyone") is False
+
+
 def test_contrast_extremes():
     assert scoring.wcag_contrast("#000000", "#ffffff") == 21.0   # max contrast
     assert scoring.wcag_contrast("#777777", "#777777") == 1.0    # identical colors

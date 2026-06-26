@@ -21,6 +21,12 @@ def reading_seconds(text: str) -> int:
     return int(round(words / WORDS_PER_MINUTE * 60))
 
 
+def format_reading_time(seconds: int) -> str:
+    """Human-friendly reading time for on-screen impact numbers ('2m 10s', '45s')."""
+    m, s = divmod(int(seconds), 60)
+    return f"{m}m {s}s" if m else f"{s}s"
+
+
 def _luminance(hex_color: str) -> float:
     h = hex_color.lstrip("#")
     r, g, b = (int(h[i : i + 2], 16) / 255 for i in (0, 2, 4))
@@ -103,6 +109,12 @@ _JARGON_WALL_TOKENS = 3       # ≥ this many jargon tokens makes a message a "w
 _JARGON_WALL_GRADE = 14.0     # …or a reading grade this high
 
 
+def is_jargon_wall(text: str) -> bool:
+    """A single message dense enough to be worth a plain-language rewrite."""
+    return (len(jargon_candidates(text)) >= _JARGON_WALL_TOKENS
+            or flesch_kincaid_grade(text) >= _JARGON_WALL_GRADE)
+
+
 def _a11y_score(*, total_images, missing_alt, has_text, avg_grade,
                 jargon_walls, color_refs, target_grade=REPORT_TARGET_GRADE) -> int:
     """Weighted 0–100 accessibility score. Missing alt text is the heaviest
@@ -139,11 +151,7 @@ def channel_report(messages: list[dict], target_grade: int = REPORT_TARGET_GRADE
 
     graded = [flesch_kincaid_grade(t) for t in texts if len(t.split()) >= 12]
     avg_grade = round(sum(graded) / len(graded), 1) if graded else 0.0
-    jargon_walls = sum(
-        1 for t in texts
-        if len(jargon_candidates(t)) >= _JARGON_WALL_TOKENS
-        or flesch_kincaid_grade(t) >= _JARGON_WALL_GRADE
-    )
+    jargon_walls = sum(1 for t in texts if is_jargon_wall(t))
     color_refs = sum(len(color_only_refs(t)) for t in texts)
 
     before = _a11y_score(

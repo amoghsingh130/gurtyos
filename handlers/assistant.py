@@ -22,6 +22,7 @@ from slack_bolt import App, Assistant
 
 from config import Settings
 from guardrails import Guardrails, BudgetExceeded
+from handlers.reactions import run_alt_text, _handle_rewrite
 from llm import digest
 from mcp_server import scoring
 from prefs.store import PrefsStore
@@ -143,7 +144,7 @@ def _run_channel_report(client, settings: Settings, query: str, set_status, say)
         log.exception("report canvas creation failed — posting summary only")
         canvas_note = ""
 
-    say(
+    summary = (
         f"📋 *Accessibility report for {label}* — score "
         f"*{rep['score_before']} → {rep['score_after']}* once I apply my fixes.\n"
         f"Scanned {rep['messages_scanned']} messages: "
@@ -152,6 +153,62 @@ def _run_channel_report(client, settings: Settings, query: str, set_status, say)
         f"{rep['avg_grade']} (target {rep['target_grade']})."
         f"{canvas_note}"
     )
+    blocks_out = [{"type": "section", "text": {"type": "mrkdwn", "text": summary}}]
+    if rep["missing_alt"] or rep["jargon_walls"]:
+        # The agent doesn't just measure — it can fix the whole channel in one click.
+        blocks_out.append({"type": "actions", "elements": [{
+            "type": "button", "action_id": "fix_channel", "value": target, "style": "primary",
+            "text": {"type": "plain_text", "text": "🛠️  Fix this channel", "emoji": True},
+        }]})
+    say(text=summary, blocks=blocks_out)
+
+
+_FIX_CAP = 3  # per click, keep it fast + within the spend guardrail
+
+
+def _fix_channel(client, settings: Settings, guard, prefs, channel_id: str, label: str, say) -> None:
+    """The agent applies its fixes channel-wide: writes alt text on images missing it
+    and posts plain-language versions of jargon walls — capped per click. Reuses the
+    same paths as the 👁️ and 🧩 reacji, so fixes appear in the channel itself."""
+    try:
+        msgs = messages.fetch_recent(client, channel_id, limit=80)
+    except Exception:
+        log.exception("fix: couldn't read %s", channel_id)
+        say(f"⚠️ I couldn't read {label} to fix it — make sure I've been invited.")
+        return
+
+    image_ts = [m["ts"] for m in msgs if m.get("ts") and any(
+        (f.get("mimetype") or "").startswith("image/") and not (f.get("alt_txt") or "").strip()
+        for f in (m.get("files") or []))][:_FIX_CAP]
+    wall_ts = [m["ts"] for m in msgs if m.get("ts") and not m.get("subtype")
+               and (m.get("text") or "").strip() and scoring.is_jargon_wall(m["text"])][:_FIX_CAP]
+
+    if not image_ts and not wall_ts:
+        say(f"✅ {label} already looks accessible — nothing for me to fix.")
+        return
+
+    say(f"🛠️ On it — fixing {label}: writing alt text for {len(image_ts)} image(s) and "
+        f"posting plain-language versions of {len(wall_ts)} thread(s)…")
+    imgs = walls = 0
+    try:
+        for ts in image_ts:
+            if guard is not None:
+                guard.check()
+            run_alt_text(client, settings, guard, channel_id, ts)
+            imgs += 1
+        for ts in wall_ts:
+            if guard is not None:
+                guard.check()
+            _handle_rewrite(client, settings, guard, prefs, channel_id, ts, user=None)
+            walls += 1
+    except BudgetExceeded as e:
+        say(f"⚠️ Stopped early — spend guardrail tripped ({e}). Fixed {imgs} image(s), "
+            f"{walls} thread(s).")
+        return
+
+    say(f"✅ Done — described *{imgs}* image(s) and posted *{walls}* plain-language "
+        f"rewrite(s) in {label}. Re-run *accessibility report on {label}* to watch the "
+        f"score climb.")
 
 
 def register(app: App, settings: Settings) -> None:
@@ -290,8 +347,9 @@ def register(app: App, settings: Settings) -> None:
                 canvas_note = ""
             progress("Building an accessible canvas", status="completed", tid="canvas")
 
-            footer = (f"\n\n_Reading grade {result.grade:.0f}. The agent audited & revised "
-                      f"its draft {result.tool_calls}× to get there._")
+            read_time = scoring.format_reading_time(scoring.reading_seconds(result.markdown))
+            footer = (f"\n\n_Reading grade {result.grade:.0f} · about {read_time} to read. "
+                      f"The agent audited & revised its draft {result.tool_calls}× to get there._")
             final_md = f"{result.markdown}{canvas_note}{footer}"
 
             if streaming:
@@ -308,5 +366,13 @@ def register(app: App, settings: Settings) -> None:
         except Exception:
             log.exception("digest flow failed")
             finish_error("Something went wrong building the summary.")
+
+    @app.action("fix_channel")
+    def on_fix_channel(ack, body, client, say, logger):
+        ack()
+        channel_id = (body["actions"][0] or {}).get("value")
+        if not channel_id:
+            return
+        _fix_channel(client, settings, guard, prefs, channel_id, f"<#{channel_id}>", say)
 
     app.use(assistant)

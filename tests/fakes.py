@@ -70,11 +70,13 @@ class FakeSlackClient:
 
 
 class Recorder:
-    """Captures positional string args from say()/set_status() callbacks."""
+    """Captures say()/set_status() callbacks — both the text and any kwargs (blocks)."""
     def __init__(self):
         self.messages: list[str] = []
+        self.calls: list[dict] = []
 
     def __call__(self, text=None, *a, **k):
+        self.calls.append({"text": text, **k})
         if text is not None:
             self.messages.append(str(text))
 
@@ -85,3 +87,15 @@ class Recorder:
     @property
     def joined(self) -> str:
         return "\n".join(self.messages)
+
+    @property
+    def last_blocks(self) -> list:
+        return self.calls[-1].get("blocks") or [] if self.calls else []
+
+    def any_block_action(self, action_id: str) -> bool:
+        for c in self.calls:
+            for b in (c.get("blocks") or []):
+                if b.get("type") == "actions":
+                    if any(e.get("action_id") == action_id for e in b.get("elements", [])):
+                        return True
+        return False

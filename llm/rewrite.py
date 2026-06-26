@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from config import Settings
 from llm import mcp_agent
+from mcp_server import scoring
 
 REWRITE_SYSTEM = (
     "You rewrite jargon-heavy Slack threads into plain language for neurodivergent "
@@ -55,6 +56,11 @@ class RewriteResult:
     grade_after: float
     language: str
     tool_calls: int = 0  # how many times the agent audited/scored its own draft
+    # Concrete impact numbers (deterministic, for on-screen "what this bought you").
+    seconds_before: int = 0
+    seconds_after: int = 0
+    acronyms_defined: int = 0   # jargon tokens removed/defined vs the original
+    sentences_split: int = 0    # over-long sentences the rewrite broke up
 
 
 def plain_language(
@@ -92,7 +98,14 @@ async def _run(settings, original, target_grade, language, guard, on_step) -> Re
         # Deterministic after-score on the agent's final rewrite.
         grade_after = await mcp_agent.score_grade(mcp, text)
 
+    # Deterministic impact deltas (pure scoring, original vs rewrite).
+    jargon_b, jargon_a = len(scoring.jargon_candidates(original)), len(scoring.jargon_candidates(text))
+    long_b, long_a = len(scoring.long_sentences(original)), len(scoring.long_sentences(text))
     return RewriteResult(
         text=text, grade_before=grade_before, grade_after=grade_after,
         language=language, tool_calls=tool_calls,
+        seconds_before=scoring.reading_seconds(original),
+        seconds_after=scoring.reading_seconds(text),
+        acronyms_defined=max(0, jargon_b - jargon_a),
+        sentences_split=max(0, long_b - long_a),
     )
