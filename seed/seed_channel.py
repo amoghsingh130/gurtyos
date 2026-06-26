@@ -20,6 +20,7 @@ import sys
 import time
 
 from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 from config import load_settings
 
@@ -75,26 +76,56 @@ def _post(client: WebClient, channel: str, persona: str, text: str, thread_ts: s
 
 
 def _clean(client: WebClient, channel: str) -> None:
-    """Delete messages this bot previously posted (best-effort; for re-seeding)."""
-    auth = client.auth_test()
-    me = auth["user_id"]
-    cur = None
-    deleted = 0
-    while True:
-        resp = client.conversations_history(channel=channel, limit=200, cursor=cur)
-        for m in resp.get("messages", []):
-            # bot_id present means we posted it; chat.delete needs the message ts
-            if m.get("bot_id") or m.get("user") == me:
-                try:
-                    client.chat_delete(channel=channel, ts=m["ts"])
-                    deleted += 1
-                    time.sleep(0.4)
-                except Exception:
-                    pass
-        cur = (resp.get("response_metadata") or {}).get("next_cursor")
-        if not cur:
+    """Delete every message this bot previously posted (parents + thread replies),
+    looping until a full scan finds none. chat.delete is rate-limited, so 429s are
+    honored with the server's Retry-After rather than silently dropped."""
+    me = client.auth_test()["user_id"]
+
+    def _mine(m: dict) -> bool:
+        return bool(m.get("bot_id")) or m.get("user") == me
+
+    def _delete(ts: str) -> bool:
+        for _ in range(5):
+            try:
+                client.chat_delete(channel=channel, ts=ts)
+                time.sleep(0.3)
+                return True
+            except SlackApiError as e:
+                if e.response.get("error") == "ratelimited":
+                    time.sleep(int(e.response.headers.get("Retry-After", 2)))
+                    continue
+                return False
+            except Exception:
+                return False
+        return False
+
+    total = 0
+    for _round in range(10):  # converge; cap so undeletable messages can't loop forever
+        found = 0
+        cur = None
+        while True:
+            resp = client.conversations_history(channel=channel, limit=200, cursor=cur)
+            for m in resp.get("messages", []):
+                # Clear our replies under ANY thread — including a tombstoned parent we
+                # can't delete; once its orphan replies are gone, the stub disappears.
+                if m.get("reply_count"):
+                    try:
+                        for r in client.conversations_replies(
+                                channel=channel, ts=m["ts"], limit=200).get("messages", []):
+                            if r.get("ts") != m["ts"] and _mine(r) and _delete(r["ts"]):
+                                total += 1
+                                found += 1
+                    except Exception:
+                        pass
+                if _mine(m) and _delete(m["ts"]):
+                    total += 1
+                    found += 1
+            cur = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cur:
+                break
+        if found == 0:
             break
-    print(f"deleted {deleted} prior bot messages")
+    print(f"deleted {total} prior bot messages")
 
 
 def main() -> None:
