@@ -1,8 +1,12 @@
-# Testing Guide — Slack Accessibility Co-pilot
+# Testing Guide — gurtYos
 
 End-to-end manual test plan plus ready-to-paste seed messages. Covers every
-user-facing flow, with emphasis on the three "competitive hardening" beats
+user-facing flow, with emphasis on the "competitive hardening" beats
 (👎 closes the loop, natural-language prefs, the proactive autonomy offer).
+
+> Also test (added later): *"accessibility report on #channel"* → the report canvas +
+> **🛠️ Fix this channel** button (or type `fix #channel`); the live audit-pass streaming in
+> catch-up; and the App Home tab. Automated coverage: `python -m pytest -q` (43 tests).
 
 ---
 
@@ -17,7 +21,7 @@ user-facing flow, with emphasis on the three "competitive hardening" beats
   - **Bot scopes:** `reactions:read`, `files:read`, `chat:write`, `assistant:write`,
     `search:read.public`, `canvases:write`, `channels:history`, `im:history`.
   - **App-level token** with `connections:write`.
-- **Invite the bot** to the demo channel: `/invite @your-app` in `C0BD2PX1753`.
+- **Invite the bot** to the demo channel: `/invite @gurtYos` in `C0BD2PX1753`.
 - Reinstall the app after any scope change.
 
 ## 1. Fast offline check (no Slack needed)
@@ -27,7 +31,7 @@ Confirms the deterministic logic before you spend any tokens:
 ```bash
 cd "/Users/amoghsingh/Documents/Projects/Slack Agent Builder Challenge"
 source .venv/bin/activate
-python -m pytest -q          # expect: 23 passed
+python -m pytest -q          # expect: 43 passed
 python -m mcp_server.server  # the MCP scorer should start (Ctrl-C to stop)
 ```
 

@@ -1,5 +1,14 @@
 # Plan to WIN First Place — Slack Accessibility Co-pilot · Agent for Good
 
+> ⚠️ **SUPERSEDED / HISTORICAL (2026-06-26).** Most of this plan is now built and shipped
+> (self-auditing loop, streaming, Channel Report + "Fix this channel", closed-loop feedback,
+> impact numbers, App Home, tests). For the **current state**, read `README.md`, `handoff.md`,
+> and `CLAUDE.md`; for the **demo/submission framing**, read `DEMO.md`. Kept below only as the
+> original strategy record — do not treat its checklists as open work.
+
+---
+
+
 ## Context
 Goal: **win the Agent-for-Good track outright ($8,000), no matter what.** Verified prize rules
 reframe the strategy:
