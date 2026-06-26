@@ -35,6 +35,8 @@ _CHANNEL_MENTION = re.compile(r"<#(C[A-Z0-9]+)(?:\|[^>]*)?>")
 # "accessibility report on #general", "a11y score", "audit #general"
 _REPORT_RE = re.compile(r"(accessibilit(?:y|ies)|a11y)\s+(report|score|audit|check)|\baudit\b",
                         re.IGNORECASE)
+# Typed fallback for the "Fix this channel" button, in case the button isn't handy.
+_FIX_RE = re.compile(r"\bfix\b", re.IGNORECASE)
 
 
 def _channel_label(client, query: str, channel_id: str) -> str:
@@ -235,6 +237,16 @@ def register(app: App, settings: Settings) -> None:
         # so it works even when RTS isn't enabled; handle it before the RTS path.
         if _REPORT_RE.search(query):
             _run_channel_report(client, settings, query, set_status, say)
+            return
+
+        # "fix #channel" — typed equivalent of the report's Fix-this-channel button.
+        if _FIX_RE.search(query):
+            fm = _CHANNEL_MENTION.search(query)
+            if fm:
+                _fix_channel(client, settings, guard, prefs, fm.group(1),
+                             _channel_label(client, query, fm.group(1)), say)
+            else:
+                say("Tell me which channel to fix, e.g. *fix #general*.")
             return
 
         channel = payload.get("channel")
