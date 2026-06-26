@@ -31,12 +31,14 @@ REWRITE_SYSTEM = (
     "Work like an editor with a checker: draft a rewrite, then call the "
     "`audit_accessibility` tool on your draft. If it reports a reading grade above "
     "the target, overly long sentences, undefined jargon, or color-only references, "
-    "revise and check again. Keep iterating until the draft meets the target.\n\n"
-    "When you are done, reply with ONLY the final rewrite — no preamble, no scores, "
-    "no commentary about your process."
+    "revise and check again — but **audit at most twice**, then return your best "
+    "version even if a metric is still slightly off.\n\n"
+    "Always finish your turn by replying with the final rewrite — never end on a tool "
+    "call without it, and never return an empty rewrite. No preamble, no scores, no "
+    "commentary about your process."
 )
 
-MAX_ITERATIONS = 6  # safety cap on the agent's draft / audit / revise turns
+MAX_ITERATIONS = 8  # safety cap on the agent's draft / audit / revise turns
 
 
 class _FinalRewrite(BaseModel):

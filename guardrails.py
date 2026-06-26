@@ -53,7 +53,9 @@ class Guardrails:
         return float(row[0])
 
     def calls_today(self) -> int:
-        today = _dt.date.today().isoformat()
+        # UTC to match how record() stamps `day` — otherwise the count is wrong in the
+        # evening, when the local date and the UTC date differ.
+        today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
         row = self._conn.execute("SELECT COUNT(*) FROM calls WHERE day = ?", (today,)).fetchone()
         return int(row[0])
 

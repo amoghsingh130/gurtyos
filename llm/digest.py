@@ -28,12 +28,14 @@ DIGEST_SYSTEM = (
     "Work like an editor with a checker: draft the summary, then call the "
     "`audit_accessibility` tool on your draft. If the reading grade is above target, "
     "or it has overly long sentences, undefined jargon, or color-only references, "
-    "revise and check again. Keep iterating until it meets the target.\n\n"
-    "When you are done, return ONLY the final summary markdown — no preamble or "
-    "commentary about your process."
+    "revise and check again — but **audit at most twice**, then return your best "
+    "version even if a metric is still slightly off.\n\n"
+    "Always finish your turn by returning the final summary markdown — never end on a "
+    "tool call without it, and never return an empty summary. No preamble or commentary "
+    "about your process."
 )
 
-MAX_ITERATIONS = 6
+MAX_ITERATIONS = 8
 
 
 class _Digest(BaseModel):

@@ -235,6 +235,14 @@ def register(app: App, settings: Settings) -> None:
                 on_step=on_step, guard=guard)
             progress("Drafting an accessible summary", status="completed", tid="draft")
 
+            # Never publish an empty canvas (e.g. if the agent didn't converge): a blank
+            # summary scores grade 0 and clutters the Files tab. Bail gracefully instead.
+            if not (result.markdown or "").strip():
+                log.warning("digest came back empty — skipping canvas")
+                finish_error("I couldn't pull together enough to summarize there. Try a "
+                             "busier channel, or ask about a specific topic.")
+                return
+
             progress("Building an accessible canvas", tid="canvas")
             title = "Catch-up summary"
             try:

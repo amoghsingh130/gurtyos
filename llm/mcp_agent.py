@@ -89,6 +89,7 @@ async def run_loop(
             output_format=output_model,
         )
         final = None
+        answer_msg = None
         tool_calls = 0
         async for message in runner:
             for blk in message.content:
@@ -99,7 +100,12 @@ async def run_loop(
             if guard is not None and getattr(message, "usage", None) is not None:
                 guard.record(model, message.usage)
             final = message
-    return _extract(final, field), tool_calls
+            # Keep the last message that actually carries the structured answer, so a
+            # trailing tool-call turn (e.g. when the iteration cap is hit mid-audit)
+            # doesn't blank the result.
+            if getattr(message, "parsed", None) is not None:
+                answer_msg = message
+    return _extract(answer_msg or final, field), tool_calls
 
 
 def _extract(message, field: str) -> str:
