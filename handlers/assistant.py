@@ -26,13 +26,12 @@ from handlers.reactions import run_alt_text, _handle_rewrite
 from llm import digest
 from mcp_server import scoring
 from prefs.store import PrefsStore
-from slack_io import canvas, messages, rts
+from slack_io import canvas, channels, messages, rts
 from slack_io.purge import purge_bot_messages
 from slack_io.stream import TaskStream
 
 log = logging.getLogger("handlers.assistant")
 
-_CHANNEL_MENTION = re.compile(r"<#(C[A-Z0-9]+)(?:\|[^>]*)?>")
 # "accessibility report on #general", "a11y score", "audit #general"
 _REPORT_RE = re.compile(r"(accessibilit(?:y|ies)|a11y)\s+(report|score|audit|check)|\baudit\b",
                         re.IGNORECASE)
@@ -124,12 +123,14 @@ def _run_channel_report(client, settings: Settings, query: str, set_status, say)
     after) and a screen-reader-friendly canvas. Uses the same deterministic scorer
     the MCP server exposes, so the on-camera number is trustworthy. No RTS token
     needed — reads channel history directly."""
-    m = _CHANNEL_MENTION.search(query)
-    if not m:
-        say("Tell me which channel to audit, e.g. *accessibility report on #general*.")
+    target, label, named = channels.resolve_target(client, query)
+    if not target:
+        if named:
+            say(f"I couldn't find {label} — pick it from the channel autocomplete so it "
+                "turns blue, or invite me to it.")
+        else:
+            say("Tell me which channel to audit, e.g. *accessibility report on #general*.")
         return
-    target = m.group(1)
-    label = _channel_label(client, query, target)
 
     set_status(f"Scanning {label} for accessibility issues")
     try:
@@ -232,6 +233,147 @@ def _purge_dm(client, dm: str, set_status, say) -> None:
         "(I can only delete my own messages, so your prompts stay.)")
 
 
+def _run_catch_up(client, settings: Settings, payload, guard, prefs, set_status, say) -> None:
+    """Catch a user up accessibly. Resolves a named channel (mention or plain #name) and
+    reads its history; with no channel named, falls back to RTS topical search. Streams
+    plan/task steps when available, else degrades to set_status."""
+    query = (payload.get("text") or "").strip()
+    channel = payload.get("channel")
+    thread_ts = payload.get("thread_ts")
+
+    # Mention (<#C…|name>) or plain typed #name → channel id; named-but-unresolved is a
+    # distinct case from "no channel mentioned" so we can give an honest error.
+    channel_id, label, named = channels.resolve_target(client, query)
+
+    # Stream plan/task steps when enabled + available; else fall back to set_status.
+    stream = TaskStream(client, channel, thread_ts)
+    streaming = settings.enable_task_stream and stream.start(
+        "*Catching you up — accessibly.* Watch the steps:")
+
+    def progress(step: str, *, status: str = "in_progress", tid: str | None = None):
+        if streaming:
+            stream.task(tid or step, step, status)
+        else:
+            set_status(step)
+
+    def finish_error(msg: str):
+        if streaming:
+            stream.stop(f"⚠️ {msg}")
+        else:
+            say(f"⚠️ {msg}")
+
+    try:
+        progress("Reading recent channel activity", tid="search")
+        if channel_id:
+            # Reliable retrieval for a named channel: pull its recent history (incl.
+            # thread replies). RTS is a relevance *search*, which starves a generic
+            # "catch me up" query — history is what this use case actually needs.
+            try:
+                msgs = messages.fetch_recent(client, channel_id, limit=80)
+            except Exception:
+                log.exception("history fetch failed for %s", channel_id)
+                finish_error(f"I couldn't read {label} — make sure I've been invited to it.")
+                return
+            ctx = _history_context(msgs)
+        elif named:
+            # They named a channel we couldn't resolve (plain #name without channels:read,
+            # or no such channel). Say so — don't silently search and then blame "activity".
+            finish_error(f"I couldn't find {label} — pick it from the channel autocomplete "
+                         "so it turns blue, or invite me to it.")
+            return
+        else:
+            # No channel named → topical search across the workspace via RTS (this is
+            # the search use case RTS is built for, and keeps it load-bearing).
+            action_token = ((payload.get("assistant_thread") or {}).get("action_token")
+                            or payload.get("action_token"))
+            if not action_token:
+                finish_error("Name a channel to catch up on (e.g. #general), or enable "
+                             "Real-Time Search so I can search across channels.")
+                return
+            resp = rts.search_context(client, query=query, action_token=action_token)
+            if not resp.get("ok"):
+                finish_error(f"Search failed: `{resp.get('error', 'unknown')}`.")
+                return
+            ctx = rts.flatten_results(resp)
+
+        if not ctx.strip():
+            finish_error("I didn't find recent messages to summarize for that.")
+            return
+        # Decline cleanly on a near-empty channel instead of spending a call and
+        # publishing a canvas that just says "nothing to summarize".
+        if _content_words(ctx) < 12:
+            finish_error("There's not enough recent activity there to summarize yet. "
+                         "Try a busier channel, or ask about a specific topic.")
+            return
+        progress("Reading recent channel activity", status="completed", tid="search")
+
+        # Apply any natural-language personalization the user asked for ("now in
+        # Spanish", "set my reading level to 5") and persist it for next time.
+        user_id = payload.get("user") or ""
+        p = prefs.get(user_id)
+        updates, pref_note = _parse_pref_updates(query, p)
+        if updates:
+            if user_id:
+                prefs.set(user_id, **updates)
+            p = prefs.get(user_id)
+            say(pref_note)
+        progress("Drafting an accessible summary", tid="draft")
+
+        audits = {"n": 0}
+
+        def on_step(tool: str):
+            # The agent calling its accessibility tools IS the visible thinking.
+            if tool == "audit_accessibility":
+                audits["n"] += 1
+                progress(
+                    f"Audited the draft (reading grade · jargon · contrast) — pass {audits['n']}",
+                    status="completed", tid=f"audit-{audits['n']}")
+
+        result = digest.synthesize(
+            settings, ctx, target_grade=p.target_grade, language=p.language,
+            on_step=on_step, guard=guard)
+        progress("Drafting an accessible summary", status="completed", tid="draft")
+
+        # Never publish an empty canvas (e.g. if the agent didn't converge): a blank
+        # summary scores grade 0 and clutters the Files tab. Bail gracefully instead.
+        if not (result.markdown or "").strip():
+            log.warning("digest came back empty — skipping canvas")
+            finish_error("I couldn't pull together enough to summarize there. Try a "
+                         "busier channel, or ask about a specific topic.")
+            return
+
+        progress("Building an accessible canvas", tid="canvas")
+        title = "Catch-up summary"
+        try:
+            canvas_id = canvas.create_accessible_digest(
+                client, title, result.markdown, channel_id=channel)
+            canvas_note = f"\n\n📄 Saved as an accessible canvas (id `{canvas_id}`)."
+        except Exception:
+            log.exception("canvas creation failed — posting markdown only")
+            canvas_note = ""
+        progress("Building an accessible canvas", status="completed", tid="canvas")
+
+        read_time = scoring.format_reading_time(scoring.reading_seconds(result.markdown))
+        footer = (f"\n\n_Reading grade {result.grade:.0f} · about {read_time} to read. "
+                  f"The agent audited & revised its draft {result.tool_calls}× to get there._")
+        final_md = f"{result.markdown}{canvas_note}{footer}"
+
+        if streaming:
+            stream.stop(final_md)
+        else:
+            say(final_md)
+
+    except BudgetExceeded as e:
+        finish_error(f"Paused — spend guardrail tripped ({e}).")
+    except anthropic.OverloadedError:
+        # 529 from the model API — transient load, not our bug. Say so plainly.
+        log.warning("digest flow hit an Anthropic 529 (overloaded) after retries")
+        finish_error("The model is briefly overloaded — please try that again in a moment.")
+    except Exception:
+        log.exception("digest flow failed")
+        finish_error("Something went wrong building the summary.")
+
+
 def register(app: App, settings: Settings) -> None:
     assistant = Assistant()
     guard = Guardrails(settings)
@@ -266,143 +408,18 @@ def register(app: App, settings: Settings) -> None:
 
         # "fix #channel" — typed equivalent of the report's Fix-this-channel button.
         if _FIX_RE.search(query):
-            fm = _CHANNEL_MENTION.search(query)
-            if fm:
-                _fix_channel(client, settings, guard, prefs, fm.group(1),
-                             _channel_label(client, query, fm.group(1)), say)
+            target, label, named = channels.resolve_target(client, query)
+            if target:
+                _fix_channel(client, settings, guard, prefs, target, label, say)
+            elif named:
+                say(f"I couldn't find {label} — pick it from the channel autocomplete so "
+                    "it turns blue, or invite me to it.")
             else:
                 say("Tell me which channel to fix, e.g. *fix #general*.")
             return
 
-        channel = payload.get("channel")
-        thread_ts = payload.get("thread_ts")
-
-        # Scope to a channel if the prompt mentions one (<#C…|name>).
-        m = _CHANNEL_MENTION.search(query)
-        context_channel_id = m.group(1) if m else None
-
-        # Stream plan/task steps when enabled + available; else fall back to set_status.
-        stream = TaskStream(client, channel, thread_ts)
-        streaming = settings.enable_task_stream and stream.start(
-            "*Catching you up — accessibly.* Watch the steps:")
-
-        def progress(label: str, *, status: str = "in_progress", tid: str | None = None):
-            if streaming:
-                stream.task(tid or label, label, status)
-            else:
-                set_status(label)
-
-        def finish_error(msg: str):
-            if streaming:
-                stream.stop(f"⚠️ {msg}")
-            else:
-                say(f"⚠️ {msg}")
-
-        try:
-            progress("Reading recent channel activity", tid="search")
-            if context_channel_id:
-                # Reliable retrieval for a named channel: pull its recent history (incl.
-                # thread replies). RTS is a relevance *search*, which starves a generic
-                # "catch me up" query — history is what this use case actually needs.
-                try:
-                    msgs = messages.fetch_recent(client, context_channel_id, limit=80)
-                except Exception:
-                    log.exception("history fetch failed for %s", context_channel_id)
-                    finish_error("I couldn't read that channel — make sure I've been "
-                                 "invited to it.")
-                    return
-                ctx = _history_context(msgs)
-            else:
-                # No channel named → topical search across the workspace via RTS (this is
-                # the search use case RTS is built for, and keeps it load-bearing).
-                action_token = ((payload.get("assistant_thread") or {}).get("action_token")
-                                or payload.get("action_token"))
-                if not action_token:
-                    finish_error("Name a channel to catch up on (e.g. #general), or enable "
-                                 "Real-Time Search so I can search across channels.")
-                    return
-                resp = rts.search_context(client, query=query, action_token=action_token)
-                if not resp.get("ok"):
-                    finish_error(f"Search failed: `{resp.get('error', 'unknown')}`.")
-                    return
-                ctx = rts.flatten_results(resp)
-
-            if not ctx.strip():
-                finish_error("I didn't find recent messages to summarize for that.")
-                return
-            # Decline cleanly on a near-empty channel instead of spending a call and
-            # publishing a canvas that just says "nothing to summarize".
-            if _content_words(ctx) < 12:
-                finish_error("There's not enough recent activity there to summarize yet. "
-                             "Try a busier channel, or ask about a specific topic.")
-                return
-            progress("Reading recent channel activity", status="completed", tid="search")
-
-            # Apply any natural-language personalization the user asked for ("now in
-            # Spanish", "set my reading level to 5") and persist it for next time.
-            user_id = payload.get("user") or ""
-            p = prefs.get(user_id)
-            updates, pref_note = _parse_pref_updates(query, p)
-            if updates:
-                if user_id:
-                    prefs.set(user_id, **updates)
-                p = prefs.get(user_id)
-                say(pref_note)
-            progress("Drafting an accessible summary", tid="draft")
-
-            audits = {"n": 0}
-
-            def on_step(tool: str):
-                # The agent calling its accessibility tools IS the visible thinking.
-                if tool == "audit_accessibility":
-                    audits["n"] += 1
-                    progress(
-                        f"Audited the draft (reading grade · jargon · contrast) — pass {audits['n']}",
-                        status="completed", tid=f"audit-{audits['n']}")
-
-            result = digest.synthesize(
-                settings, ctx, target_grade=p.target_grade, language=p.language,
-                on_step=on_step, guard=guard)
-            progress("Drafting an accessible summary", status="completed", tid="draft")
-
-            # Never publish an empty canvas (e.g. if the agent didn't converge): a blank
-            # summary scores grade 0 and clutters the Files tab. Bail gracefully instead.
-            if not (result.markdown or "").strip():
-                log.warning("digest came back empty — skipping canvas")
-                finish_error("I couldn't pull together enough to summarize there. Try a "
-                             "busier channel, or ask about a specific topic.")
-                return
-
-            progress("Building an accessible canvas", tid="canvas")
-            title = "Catch-up summary"
-            try:
-                canvas_id = canvas.create_accessible_digest(
-                    client, title, result.markdown, channel_id=channel)
-                canvas_note = f"\n\n📄 Saved as an accessible canvas (id `{canvas_id}`)."
-            except Exception:
-                log.exception("canvas creation failed — posting markdown only")
-                canvas_note = ""
-            progress("Building an accessible canvas", status="completed", tid="canvas")
-
-            read_time = scoring.format_reading_time(scoring.reading_seconds(result.markdown))
-            footer = (f"\n\n_Reading grade {result.grade:.0f} · about {read_time} to read. "
-                      f"The agent audited & revised its draft {result.tool_calls}× to get there._")
-            final_md = f"{result.markdown}{canvas_note}{footer}"
-
-            if streaming:
-                stream.stop(final_md)
-            else:
-                say(final_md)
-
-        except BudgetExceeded as e:
-            finish_error(f"Paused — spend guardrail tripped ({e}).")
-        except anthropic.OverloadedError:
-            # 529 from the model API — transient load, not our bug. Say so plainly.
-            log.warning("digest flow hit an Anthropic 529 (overloaded) after retries")
-            finish_error("The model is briefly overloaded — please try that again in a moment.")
-        except Exception:
-            log.exception("digest flow failed")
-            finish_error("Something went wrong building the summary.")
+        # Catch me up accessibly — resolves a named channel, else RTS topical search.
+        _run_catch_up(client, settings, payload, guard, prefs, set_status, say)
 
     @app.action("fix_channel")
     def on_fix_channel(ack, body, client, say, logger):

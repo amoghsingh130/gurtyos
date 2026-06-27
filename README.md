@@ -40,8 +40,9 @@ Run the MCP scorer standalone: `python -m mcp_server.server`
 ### Slack app config (api.slack.com/apps → your app)
 - **Bot scopes:** `reactions:read`, `files:read`, `chat:write`, `assistant:write`,
   `search:read.public`, `canvases:write`, `channels:history`, `im:history`.
-  *Recommended extras:* `channels:read` (real channel names in the report),
-  `chat:write.customize` (multi-persona demo seeding).
+  *Recommended extras:* `channels:read` (real channel names in the report **and
+  resolving a plain typed `#name` — without it, a non-autocompleted `#channel` can't be
+  found**), `chat:write.customize` (multi-persona demo seeding).
 - **App-level token** with `connections:write` (Socket Mode).
 - **Event Subscriptions → bot events:** `reaction_added`, `message.channels`, `message.im`,
   `app_home_opened`.

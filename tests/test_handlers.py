@@ -169,6 +169,132 @@ def test_fix_channel_noop_when_already_accessible(monkeypatch):
     assert "already looks accessible" in say.last
 
 
+# --- catch-up routing: channel resolution -----------------------------------
+
+from llm.digest import DigestResult
+
+
+def _settings_no_stream() -> Settings:
+    # Disable streaming so finish_error/say() are observable (no stream.stop swallow).
+    return Settings(slack_bot_token="x", slack_app_token="x", anthropic_api_key="x",
+                    demo_channels=("C0DEMO",), enable_task_stream=False)
+
+
+def _patch_digest(monkeypatch) -> dict:
+    """Stub digest.synthesize so routing tests stay offline; capture the context it got."""
+    seen: dict = {}
+
+    def fake(settings, ctx, target_grade=6, language="English", on_step=None, guard=None):
+        seen["ctx"] = ctx
+        return DigestResult(markdown="A simple summary.", grade=6.0, tool_calls=1)
+
+    monkeypatch.setattr(assistant.digest, "synthesize", fake)
+    return seen
+
+
+_RICH = ("We shipped the auth refactor today and every test is green across the whole "
+         "payments suite now.")
+
+
+def test_catch_up_mention_uses_history_not_search(tmp_path, monkeypatch):
+    seen = _patch_digest(monkeypatch)
+    client = FakeSlackClient(history=[{"ts": "1", "user": "alice", "text": _RICH}])
+    assistant.channels.reset_cache()
+    say = Recorder()
+    payload = {"text": "catch me up on <#C1|acct-omega>", "channel": "D1", "user": "U1"}
+    assistant._run_catch_up(client, _settings_no_stream(), payload, None, _prefs(tmp_path),
+                            Recorder(), say)
+    assert client.calls_to("conversations_history")[0]["channel"] == "C1"
+    assert "auth refactor" in seen["ctx"]            # read history, not RTS
+    assert "simple summary" in say.last.lower()
+
+
+def test_catch_up_plain_name_resolves_via_list(tmp_path, monkeypatch):
+    seen = _patch_digest(monkeypatch)
+    client = FakeSlackClient(history=[{"ts": "1", "user": "alice", "text": _RICH}],
+                             channels=[{"id": "C7", "name": "acct-omega"}])
+    assistant.channels.reset_cache()
+    say = Recorder()
+    payload = {"text": "catch me up on #acct-omega", "channel": "D1", "user": "U1"}
+    assistant._run_catch_up(client, _settings_no_stream(), payload, None, _prefs(tmp_path),
+                            Recorder(), say)
+    assert client.called("conversations_list")
+    assert client.calls_to("conversations_history")[0]["channel"] == "C7"
+    assert "simple summary" in say.last.lower()
+
+
+def test_catch_up_unresolved_name_is_clear_not_empty_channel(tmp_path, monkeypatch):
+    # The regression guard for this session's bug: a typed #name we can't resolve must
+    # say "couldn't find", NOT "not enough recent activity", and must not read history.
+    _patch_digest(monkeypatch)
+    client = FakeSlackClient(channels=[{"id": "C1", "name": "general"}])  # no acct-omega
+    assistant.channels.reset_cache()
+    say = Recorder()
+    payload = {"text": "catch me up on #acct-omega", "channel": "D1", "user": "U1"}
+    assistant._run_catch_up(client, _settings_no_stream(), payload, None, _prefs(tmp_path),
+                            Recorder(), say)
+    assert "couldn't find" in say.last.lower()
+    assert "not enough recent activity" not in say.last.lower()
+    assert not client.called("conversations_history")
+
+
+def test_catch_up_no_channel_no_token_asks_for_channel(tmp_path, monkeypatch):
+    _patch_digest(monkeypatch)
+    client = FakeSlackClient()
+    assistant.channels.reset_cache()
+    say = Recorder()
+    payload = {"text": "catch me up please", "channel": "D1", "user": "U1"}
+    assistant._run_catch_up(client, _settings_no_stream(), payload, None, _prefs(tmp_path),
+                            Recorder(), say)
+    assert "name a channel" in say.last.lower()
+
+
+def test_catch_up_no_channel_with_token_uses_rts(tmp_path, monkeypatch):
+    seen = _patch_digest(monkeypatch)
+    called = {}
+
+    def fake_search(client, query, action_token):
+        called["q"] = query
+        return {"ok": True}
+
+    monkeypatch.setattr(assistant.rts, "search_context", fake_search)
+    monkeypatch.setattr(assistant.rts, "flatten_results", lambda resp: f"alice: {_RICH}")
+    client = FakeSlackClient()
+    assistant.channels.reset_cache()
+    say = Recorder()
+    payload = {"text": "catch me up on the migration", "channel": "D1", "user": "U1",
+               "assistant_thread": {"action_token": "tok"}}
+    assistant._run_catch_up(client, _settings_no_stream(), payload, None, _prefs(tmp_path),
+                            Recorder(), say)
+    assert called["q"] == "catch me up on the migration"
+    assert not client.called("conversations_history")   # RTS path, no channel read
+    assert "simple summary" in say.last.lower()
+
+
+def test_catch_up_resolved_but_thin_channel_declines(tmp_path, monkeypatch):
+    _patch_digest(monkeypatch)
+    client = FakeSlackClient(history=[{"ts": "1", "user": "a", "text": "hi"}])
+    assistant.channels.reset_cache()
+    say = Recorder()
+    payload = {"text": "catch me up on <#C1|quiet>", "channel": "D1", "user": "U1"}
+    assistant._run_catch_up(client, _settings_no_stream(), payload, None, _prefs(tmp_path),
+                            Recorder(), say)
+    assert "not enough recent activity" in say.last.lower()
+
+
+def test_resolve_target_mention_plain_hit_miss_and_none():
+    from slack_io import channels as ch
+    client = FakeSlackClient(channels=[{"id": "C9", "name": "acct-omega"}])
+    ch.reset_cache()
+    assert ch.resolve_target(client, "report on <#C1|general>") == ("C1", "#general", True)
+    ch.reset_cache()
+    assert ch.resolve_target(client, "catch me up on #acct-omega") == ("C9", "#acct-omega", True)
+    ch.reset_cache()
+    assert ch.resolve_target(client, "catch me up on #nope") == (None, "#nope", True)
+    ch.reset_cache()
+    assert ch.resolve_target(client, "explain the latest simply") == (None, None, False)
+
+
 # --- impact numbers on the rewrite reply ------------------------------------
 
 def test_rewrite_message_shows_impact_numbers():

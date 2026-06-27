@@ -10,12 +10,14 @@ from slack_sdk.errors import SlackApiError
 
 class FakeSlackClient:
     def __init__(self, *, history=None, replies=None, channel_name=None,
-                 info_raises=False):
+                 info_raises=False, channels=None, list_raises=False):
         self.calls: list[tuple[str, dict]] = []
         self._history = list(history or [])
         self._replies = dict(replies or {})       # parent_ts -> [reply messages]
         self._channel_name = channel_name
         self._info_raises = info_raises
+        self._channels = list(channels or [])     # [{"id":..., "name":...}] for list
+        self._list_raises = list_raises
         self._canvas_seq = 0
 
     # --- helpers for assertions ------------------------------------------
@@ -46,6 +48,12 @@ class FakeSlackClient:
         if self._info_raises:
             raise SlackApiError("missing_scope", {"ok": False, "error": "missing_scope"})
         return {"ok": True, "channel": {"name": self._channel_name or "general"}}
+
+    def conversations_list(self, **kw):
+        self._rec("conversations_list", **kw)
+        if self._list_raises:
+            raise SlackApiError("missing_scope", {"ok": False, "error": "missing_scope"})
+        return {"ok": True, "channels": list(self._channels), "response_metadata": {}}
 
     def chat_postMessage(self, **kw):
         self._rec("chat_postMessage", **kw)
