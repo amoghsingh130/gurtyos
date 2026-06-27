@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from config import Settings
-from llm import mcp_agent
+from llm import mcp_agent, sanitize
 from mcp_server import scoring
 
 REWRITE_SYSTEM = (
@@ -37,7 +37,7 @@ REWRITE_SYSTEM = (
     "Always finish your turn by replying with the final rewrite — never end on a tool "
     "call without it, and never return an empty rewrite. No preamble, no scores, no "
     "commentary about your process."
-)
+) + sanitize.INJECTION_GUARD
 
 MAX_ITERATIONS = 8  # safety cap on the agent's draft / audit / revise turns
 
@@ -87,7 +87,7 @@ async def _run(settings, original, target_grade, language, guard, on_step) -> Re
         user = (
             f"Rewrite the following Slack thread at roughly a US grade-{target_grade} "
             f"reading level, in {language}. Use the accessibility tools to check and "
-            f"improve your draft before you finish.\n\n{original}"
+            f"improve your draft before you finish.\n\n{sanitize.fence(original)}"
         )
         text, tool_calls = await mcp_agent.run_loop(
             settings, model=settings.model_rewrite, system=REWRITE_SYSTEM, user=user,

@@ -17,14 +17,33 @@ not a claim. Built for the Slack Agent Builder Challenge, **Agent for Good** tra
 | **Natural-language prefs** | *"now in Spanish"*, *"set my reading level to 5"* | parsed, persisted, applied to future output |
 | **App Home** | click the app | a formatted, fully alt-texted intro + guide |
 
-## The three required techs are load-bearing
+## Why this is an *agent*, not a bot
+gurtYos doesn't just answer commands — it **plans, uses tools, checks its own work, and
+acts on its own**:
+- **Autonomous tool-use loop.** Rewrite and digest run a real `tool_runner`
+  **draft → audit → revise** loop against a custom MCP scorer, revising until the output
+  meets the reader's target grade — you watch the audit passes stream live in the Assistant.
+- **Acts unprompted.** It notices un-alt-texted images and jargon walls and offers to fix
+  them; the channel report's one click then fixes a whole channel.
+- **Measures itself.** Every fix reports a *deterministic* reading-grade **before → after**,
+  so impact is a number, not a claim.
+- **Remembers.** 👎 lowers your reading level and persists it; *"now in Spanish"* sticks.
+
+### The three platform pillars are load-bearing
 Remove any one and a flow breaks:
 - **Slack Assistant** (`handlers/assistant.py`) — the co-pilot surface + live plan/task streaming.
 - **Custom MCP server** (`mcp_server/`) — a FastMCP accessibility scorer (Flesch-Kincaid grade,
-  WCAG contrast, jargon/long-sentence audit). The rewrite and digest run a real `tool_runner`
-  **draft → audit → revise** loop against it over a live stdio session.
+  WCAG contrast, jargon/long-sentence audit) that *drives* the agent's revise loop over a live
+  stdio session — it doesn't just decorate the output.
 - **Real-Time Search** (`slack_io/rts.py`, `assistant.search.context`) — powers the topical /
   cross-channel catch-up path (named-channel catch-up reads history directly for reliability).
+
+### Untrusted content is fenced against prompt injection
+Channel messages, thread text, and search results are user-controlled, so they're **fenced
+and spotlighted** before reaching the model (`llm/sanitize.py`): the agent is told the fenced
+text is data to summarize/rewrite, never instructions — defending against a hostile message
+("ignore previous instructions…") or text baked into an image. Spend/rate **guardrails**
+(`guardrails.py`) cap cost per run and per day.
 
 ## Setup
 Requires **Python 3.10+** (MCP needs it).

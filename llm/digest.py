@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from config import Settings
-from llm import mcp_agent
+from llm import mcp_agent, sanitize
 
 log = logging.getLogger("llm.digest")
 
@@ -37,7 +37,7 @@ DIGEST_SYSTEM = (
     "tool call without it, and never return an empty summary. No preamble or commentary "
     "about your process. The summary must contain only reader-facing content with "
     "section headings — never your audit notes, status updates, or words like 'revising'."
-)
+) + sanitize.INJECTION_GUARD
 
 # Appended on a retry when the agent ended its turn on narration instead of the summary.
 _RETRY_NUDGE = (
@@ -93,7 +93,7 @@ async def _run(settings, rts_context, target_grade, language, on_step, guard) ->
         user = (
             f"Reading grade: {target_grade}. Language: {language}.\n\n"
             f"Summarize this Slack activity accessibly. Use the accessibility tools to "
-            f"check and improve your draft before you finish.\n\n{rts_context}"
+            f"check and improve your draft before you finish.\n\n{sanitize.fence(rts_context)}"
         )
 
         async def _attempt(extra: str = ""):

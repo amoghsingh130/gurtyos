@@ -6,12 +6,13 @@ import base64
 import anthropic
 
 from config import Settings
+from llm import sanitize
 
 ALT_TEXT_PROMPT = (
     "Write concise, accurate alt text for this image for a blind or low-vision Slack "
     "user. Lead with the most important content. Describe meaningful text in the image "
     "verbatim. No 'image of'/'picture of' preamble. One to two sentences."
-)
+) + sanitize.IMAGE_INJECTION_GUARD
 
 
 def describe(settings: Settings, image_bytes: bytes, media_type: str, guard=None) -> str:
