@@ -76,13 +76,6 @@ def _home_view() -> dict:
             {"type": "image", "image_url": HOME_IMAGES["banner"]["url"],
              "alt_text": HOME_IMAGES["banner"]["alt"]},
 
-            # --- Who I help (2-column grid) ----------------------------------
-            {"type": "section", "fields": [
-                {"type": "mrkdwn", "text": "🦮  *Blind & low-vision*\nAlt text + screen-reader-ready digests"},
-                {"type": "mrkdwn", "text": "🧠  *Neurodivergent*\nPlain language, shorter sentences"},
-                {"type": "mrkdwn", "text": "🌍  *Non-native English*\nRewrites in your language"},
-                {"type": "mrkdwn", "text": "📊  *Everyone*\nMeasurable, ADA / 508-aligned"},
-            ]},
             {"type": "divider"},
 
             # --- What I can do (feature + full-width screenshot) -------------
@@ -93,20 +86,24 @@ def _home_view() -> dict:
                 "React :jigsaw: on a jargon-heavy thread. I rewrite it and show the reading "
                 "grade *before → after*. Tap 👎 and I make it simpler — and remember your level.",
                 "rewrite"),
+            {"type": "divider"},
             *_feature(
                 "*💬  Catch me up, accessibly*\n"
                 "Message me _“catch me up on #channel”_ → a screen-reader-friendly canvas "
                 "summary, in your language (_“now in Spanish”_) and at your reading level.",
                 "digest"),
+            {"type": "divider"},
             *_feature(
                 "*📋  Accessibility report*\n"
                 "Message me _“accessibility report on #channel”_ → a whole-channel score, "
                 "current *→* projected-after-fixes, framed for ADA / Section 508.",
                 "report"),
+            {"type": "divider"},
             _section(
                 "*👁️  Describe an image*\n"
                 "React :eyes: on any message with an image → screen-reader-quality alt text "
                 "in the thread."),
+            {"type": "divider"},
             _section(
                 "*⚡  I act on my own*\n"
                 "In channels I watch, I notice hard-to-read threads and offer to fix them — "
