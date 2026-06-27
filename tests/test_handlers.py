@@ -217,6 +217,44 @@ def test_content_words_counts_after_prefix():
 
 # --- home tab ---------------------------------------------------------------
 
+# --- "clear our chat" DM purge ----------------------------------------------
+
+def test_purge_dm_deletes_only_bot_messages_and_reports_count():
+    history = [
+        {"ts": "1", "bot_id": "B1", "text": "old digest"},     # bot -> delete
+        {"ts": "2", "user": "U_HUMAN", "text": "catch me up"},  # user prompt -> keep
+        {"ts": "3", "user": "U_BOT", "text": "report link"},    # bot (by user_id) -> delete
+    ]
+    client = FakeSlackClient(history=history)
+    say = Recorder()
+    assistant._purge_dm(client, "D1", set_status=Recorder(), say=say)
+
+    deleted = {kw["ts"] for kw in client.calls_to("chat_delete")}
+    assert deleted == {"1", "3"}                 # human prompt untouched
+    assert "2" in [m.get("ts") for m in client._history]
+    assert "Cleared" in say.last and "2" in say.last
+
+
+def test_purge_dm_clears_bot_replies_under_a_thread():
+    history = [{"ts": "10", "user": "U_HUMAN", "text": "q?", "reply_count": 1}]
+    replies = {"10": [
+        {"ts": "10", "user": "U_HUMAN", "text": "q?"},
+        {"ts": "11", "bot_id": "B1", "text": "bot reply"},
+    ]}
+    client = FakeSlackClient(history=history, replies=replies)
+    assistant._purge_dm(client, "D1", set_status=Recorder(), say=Recorder())
+    assert {kw["ts"] for kw in client.calls_to("chat_delete")} == {"11"}
+
+
+def test_purge_regex_matches_phrasings_but_not_catchup():
+    for q in ("clear our chat", "delete history", "forget our conversation",
+              "wipe my messages", "clean up our chat history"):
+        assert assistant._PURGE_RE.search(q), q
+    for q in ("catch me up on #general", "accessibility report on #general",
+              "fix #general", "explain this simply"):
+        assert not assistant._PURGE_RE.search(q), q
+
+
 # --- live task streaming: chunk schema --------------------------------------
 
 def test_task_stream_normalizes_status_to_slack_enum():

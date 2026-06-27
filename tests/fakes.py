@@ -80,6 +80,18 @@ class FakeSlackClient:
         self._rec("chat_stopStream", **kw)
         return {"ok": True}
 
+    def auth_test(self, **kw):
+        self._rec("auth_test", **kw)
+        return {"ok": True, "user_id": "U_BOT"}
+
+    def chat_delete(self, channel, ts, **kw):
+        self._rec("chat_delete", channel=channel, ts=ts)
+        # Mutate so the purge loop converges (real chat.delete removes the message).
+        self._history = [m for m in self._history if m.get("ts") != ts]
+        for parent in list(self._replies):
+            self._replies[parent] = [r for r in self._replies[parent] if r.get("ts") != ts]
+        return {"ok": True}
+
 
 class Recorder:
     """Captures say()/set_status() callbacks — both the text and any kwargs (blocks)."""

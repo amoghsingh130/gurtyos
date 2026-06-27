@@ -27,6 +27,7 @@ from llm import digest
 from mcp_server import scoring
 from prefs.store import PrefsStore
 from slack_io import canvas, messages, rts
+from slack_io.purge import purge_bot_messages
 from slack_io.stream import TaskStream
 
 log = logging.getLogger("handlers.assistant")
@@ -37,6 +38,10 @@ _REPORT_RE = re.compile(r"(accessibilit(?:y|ies)|a11y)\s+(report|score|audit|che
                         re.IGNORECASE)
 # Typed fallback for the "Fix this channel" button, in case the button isn't handy.
 _FIX_RE = re.compile(r"\bfix\b", re.IGNORECASE)
+# "clear our chat", "delete history", "forget our conversation" — de-clog the DM tab.
+_PURGE_RE = re.compile(
+    r"\b(clear|delete|wipe|purge|forget|clean)\b[\w\s]*\b(chat|history|messages?|conversation)\b",
+    re.IGNORECASE)
 
 
 def _channel_label(client, query: str, channel_id: str) -> str:
@@ -213,6 +218,20 @@ def _fix_channel(client, settings: Settings, guard, prefs, channel_id: str, labe
         f"score climb.")
 
 
+def _purge_dm(client, dm: str, set_status, say) -> None:
+    """Delete the bot's own messages in this DM to de-clog the Assistant tab. A bot
+    token can't delete the user's prompts, so those remain — we say so."""
+    set_status("Clearing my past messages from our chat")
+    try:
+        n = purge_bot_messages(client, dm)
+    except Exception:
+        log.exception("purge failed for %s", dm)
+        say("⚠️ I couldn't clear our chat just now — try again in a moment.")
+        return
+    say(f"🧹 Cleared *{n}* of my past message(s) from our chat. "
+        "(I can only delete my own messages, so your prompts stay.)")
+
+
 def register(app: App, settings: Settings) -> None:
     assistant = Assistant()
     guard = Guardrails(settings)
@@ -232,6 +251,12 @@ def register(app: App, settings: Settings) -> None:
     @assistant.user_message
     def on_user_message(payload, client, context, set_status, say, logger):
         query = (payload.get("text") or "").strip()
+
+        # "clear our chat" — delete the bot's own messages in this DM to de-clog the
+        # Assistant tab. A bot token can't delete the user's prompts, so those remain.
+        if _PURGE_RE.search(query):
+            _purge_dm(client, payload.get("channel"), set_status, say)
+            return
 
         # Channel accessibility report — the org-scale beat. Reads history directly,
         # so it works even when RTS isn't enabled; handle it before the RTS path.
