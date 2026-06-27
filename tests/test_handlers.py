@@ -343,6 +343,19 @@ def test_content_words_counts_after_prefix():
 
 # --- home tab ---------------------------------------------------------------
 
+# --- digest: reject agent narration masquerading as a summary ----------------
+
+def test_digest_looks_like_summary_rejects_narration():
+    from llm.digest import _looks_like_summary
+    assert _looks_like_summary("## Standup\nThe team shipped the auth refactor today.")
+    assert _looks_like_summary("word " * 60)            # long enough even without a heading
+    assert not _looks_like_summary("")
+    # The real Run-2 failure: short audit narration, no heading -> not a summary.
+    assert not _looks_like_summary(
+        "The audit flagged a grade-18 score caused by the long bullet lists being read "
+        "as run-on sentences. Revising now.")
+
+
 # --- "clear our chat" DM purge ----------------------------------------------
 
 def test_purge_dm_deletes_only_bot_messages_and_reports_count():
