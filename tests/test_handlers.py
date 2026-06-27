@@ -440,6 +440,7 @@ def test_home_view_is_valid_and_fully_alt_texted():
     imgs = [b for b in v["blocks"] if b["type"] == "image"]
     accs = [b["accessory"] for b in v["blocks"]
             if b.get("accessory", {}).get("type") == "image"]
-    assert imgs and accs
+    # Banner + the three full-width feature screenshots, all as standalone image blocks.
+    assert len(imgs) >= 4
     for im in imgs + accs:
         assert im.get("image_url") and im.get("alt_text"), "every image needs url + alt"
