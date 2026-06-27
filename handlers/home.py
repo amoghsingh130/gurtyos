@@ -31,16 +31,16 @@ HOME_IMAGES = {
         "alt": "gurtYos — accessibility co-pilot for Slack.",
     },
     "rewrite": {
-        "url": "https://placehold.co/400x300/2EB67D/FFFFFF/png?text=grade%2024%20%E2%86%92%207",
-        "alt": "A jargon-heavy thread rewritten in plain language, reading grade 24 to 7.",
+        "url": "https://raw.githubusercontent.com/amoghsingh130/gurtyos/main/assets/home-rewrite.png",
+        "alt": "A jargon-heavy thread rewritten in plain language, reading grade 23 to 4.",
     },
     "digest": {
-        "url": "https://placehold.co/400x300/1264A3/FFFFFF/png?text=accessible%0Acanvas",
+        "url": "https://raw.githubusercontent.com/amoghsingh130/gurtyos/main/assets/home-digest.png",
         "alt": "An accessible canvas summarizing a channel in short, headed sections.",
     },
     "report": {
-        "url": "https://placehold.co/400x300/ECB22E/111111/png?text=score%2022%20%E2%86%92%2097",
-        "alt": "A channel accessibility report scoring 22 out of 100, projected 97 after fixes.",
+        "url": "https://raw.githubusercontent.com/amoghsingh130/gurtyos/main/assets/home-report.png",
+        "alt": "A channel accessibility report scoring 26 out of 100, projected 97 after fixes.",
     },
 }
 
