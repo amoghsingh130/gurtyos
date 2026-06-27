@@ -217,6 +217,32 @@ def test_content_words_counts_after_prefix():
 
 # --- home tab ---------------------------------------------------------------
 
+# --- live task streaming: chunk schema --------------------------------------
+
+def test_task_stream_normalizes_status_to_slack_enum():
+    from slack_io.stream import TaskStream
+    client = FakeSlackClient()
+    s = TaskStream(client, "C1", "100.1")
+    s._ts, s.active = "100.2", True          # pretend start() succeeded
+
+    s.task("step", "Reading activity", "completed")
+    chunk = client.calls_to("chat_appendStream")[-1]["chunks"][0]
+    assert chunk["status"] == "complete"     # not the invalid "completed"
+    assert chunk["type"] == "task_update" and chunk["id"] == "step"
+
+
+def test_task_stream_start_and_stop_use_text_chunk_field():
+    from slack_io.stream import TaskStream
+    client = FakeSlackClient()
+    s = TaskStream(client, "C1", "100.1")
+    assert s.start("intro") is True
+    assert client.calls_to("chat_startStream")[-1]["chunks"][0] == {
+        "type": "markdown_text", "text": "intro"}
+    s.stop("final")
+    assert client.calls_to("chat_stopStream")[-1]["chunks"][0] == {
+        "type": "markdown_text", "text": "final"}
+
+
 def test_home_view_is_valid_and_fully_alt_texted():
     v = home._home_view()
     assert v["type"] == "home" and v["blocks"]

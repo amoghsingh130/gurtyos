@@ -68,6 +68,18 @@ class FakeSlackClient:
         self._rec("views_publish", **kw)
         return {"ok": True}
 
+    def chat_startStream(self, **kw):
+        self._rec("chat_startStream", **kw)
+        return {"ok": True, "ts": "1700000000.000200"}
+
+    def chat_appendStream(self, **kw):
+        self._rec("chat_appendStream", **kw)
+        return {"ok": True}
+
+    def chat_stopStream(self, **kw):
+        self._rec("chat_stopStream", **kw)
+        return {"ok": True}
+
 
 class Recorder:
     """Captures say()/set_status() callbacks — both the text and any kwargs (blocks)."""

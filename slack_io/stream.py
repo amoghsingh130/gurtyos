@@ -8,7 +8,7 @@ is defensive — if streaming is unavailable the caller falls back to set_status
 
 Chunk shapes (pinned against docs.slack.dev/ai/developing-agents):
 - start:  chat.startStream(task_display_mode="plan", chunks=[{type:"markdown_text", ...}])
-- step:   chat.appendStream(message_ts=…, chunks=[{type:"task_update", task:{…}}])
+- step:   chat.appendStream(message_ts=…, chunks=[{type:"task_update", id, title, status}])
 - finish: chat.stopStream(message_ts=…, chunks=[{type:"markdown_text", ...}])  (may carry blocks)
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ class TaskStream:
                 channel=self._channel,
                 thread_ts=self._thread_ts,
                 task_display_mode="plan",
-                chunks=[{"type": "markdown_text", "markdown_text": intro}],
+                chunks=[{"type": "markdown_text", "text": intro}],
             )
             self._ts = resp.get("ts") or resp.get("message_ts")
             self.active = bool(self._ts)
@@ -44,6 +44,11 @@ class TaskStream:
             self.active = False
         return self.active
 
+    # Slack's task_update status enum: pending | in_progress | complete | error.
+    # Callers say "completed"/"done"; normalize so the chunk passes schema validation.
+    _STATUS = {"completed": "complete", "done": "complete", "complete": "complete",
+               "in_progress": "in_progress", "pending": "pending", "error": "error"}
+
     def task(self, task_id: str, title: str, status: str = "in_progress") -> None:
         """Add or update a task step. Status: in_progress | completed | error."""
         if not self.active:
@@ -51,11 +56,11 @@ class TaskStream:
         try:
             self._client.chat_appendStream(
                 channel=self._channel,
-                message_ts=self._ts,
-                thread_ts=self._thread_ts,
+                ts=self._ts,
                 chunks=[{
                     "type": "task_update",
-                    "task": {"task_id": task_id, "title": title, "status": status},
+                    "id": task_id, "title": title,
+                    "status": self._STATUS.get(status, "in_progress"),
                 }],
             )
         except Exception:
@@ -68,9 +73,8 @@ class TaskStream:
         try:
             self._client.chat_stopStream(
                 channel=self._channel,
-                message_ts=self._ts,
-                thread_ts=self._thread_ts,
-                chunks=[{"type": "markdown_text", "markdown_text": final_markdown}],
+                ts=self._ts,
+                chunks=[{"type": "markdown_text", "text": final_markdown}],
             )
         except Exception:
             log.warning("chat.stopStream failed", exc_info=True)
