@@ -1,8 +1,12 @@
 """Proactive offers — what turns the tool into an *agent* that acts unprompted:
 
-  • image with no alt text  -> ephemeral "Describe this image? 👁️" (reuses alt-text path)
-  • hard-to-read text thread -> ephemeral "Post a plain-language version? 🧩"
+  • image with no alt text  -> posted "Describe this image? 👁️" (reuses alt-text path)
+  • hard-to-read text thread -> posted "Post a plain-language version? 🧩"
     (DEMO_CHANNELS-scoped, reuses the rewrite path) — the autonomy beat.
+
+The offers are posted as ordinary channel messages (not ephemeral) so they're visible to
+everyone, persist through reloads, and film cleanly for the demo. Accepting the offer
+swaps the message in place (replace_original) and posts the result in the thread.
 
 The text screen is a cheap, deterministic, LLM-free heuristic (reuses the pure
 `mcp_server.scoring` functions), so watching a channel costs nothing until the user
@@ -57,8 +61,10 @@ def register(app: App, settings: Settings) -> None:
 
     @app.event("message")
     def on_message(event, client, logger):
-        # Ignore bot echoes / edits / non-file messages.
-        if event.get("subtype") in _IGNORED_SUBTYPES:
+        # Ignore bot echoes / edits / non-file messages. The bot_id guard is what keeps
+        # our own now-visible offer posts (and the seed personas) from re-triggering the
+        # handler — ephemeral offers never generated message events, posted ones do.
+        if event.get("subtype") in _IGNORED_SUBTYPES or event.get("bot_id"):
             return
 
         channel = event.get("channel")
@@ -71,9 +77,8 @@ def register(app: App, settings: Settings) -> None:
                   if (f.get("mimetype") or "").startswith("image/")]
         # Image missing alt text → offer to describe it (takes precedence).
         if images and not all(f.get("alt_txt") for f in images):
-            client.chat_postEphemeral(
+            client.chat_postMessage(
                 channel=channel,
-                user=user,
                 blocks=blocks.alt_text_offer(f"{channel}:{ts}"),
                 text="This image has no alt text. Describe it? 👁️",  # fallback for a11y/notifs
             )
@@ -90,9 +95,8 @@ def register(app: App, settings: Settings) -> None:
         if not _looks_hard(settings, event.get("text") or ""):
             return
         _offered.add(key)
-        client.chat_postEphemeral(
+        client.chat_postMessage(
             channel=channel,
-            user=user,
             blocks=blocks.rewrite_offer(key),
             text="This thread may be hard to read for some teammates — "
                  "post a plain-language version? 🧩",  # fallback for a11y/notifs

@@ -45,7 +45,8 @@ _RETRY_NUDGE = (
     "headings. Do not include audit notes, status updates, or words like 'revising'."
 )
 
-MAX_ITERATIONS = 8
+MAX_ITERATIONS = 4  # see llm/rewrite.py; the wall-clock timeout in mcp_agent.run_loop
+# is the real guard against a wedged MCP scorer.
 
 
 def _looks_like_summary(md: str) -> bool:

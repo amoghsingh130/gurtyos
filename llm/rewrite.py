@@ -39,7 +39,9 @@ REWRITE_SYSTEM = (
     "commentary about your process."
 ) + sanitize.INJECTION_GUARD
 
-MAX_ITERATIONS = 8  # safety cap on the agent's draft / audit / revise turns
+MAX_ITERATIONS = 4  # the agent needs enough turns to emit its FINAL structured rewrite
+# after auditing — too low (e.g. 2) can cut it off mid-audit, yielding an empty result.
+# The wall-clock timeout in llm/mcp_agent.run_loop is the guard against a wedge.
 
 
 class _FinalRewrite(BaseModel):

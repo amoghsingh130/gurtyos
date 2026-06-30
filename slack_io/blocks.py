@@ -42,7 +42,7 @@ def feedback_buttons(value: str) -> list[dict]:
 
 
 def alt_text_offer(value: str) -> list[dict]:
-    """Ephemeral proactive offer to describe an image."""
+    """Proactive in-channel offer to describe an image."""
     return [
         {
             "type": "section",
@@ -58,7 +58,7 @@ def alt_text_offer(value: str) -> list[dict]:
 
 
 def rewrite_offer(value: str) -> list[dict]:
-    """Ephemeral proactive offer to post a plain-language version of a hard thread."""
+    """Proactive in-channel offer to post a plain-language version of a hard thread."""
     return [
         {
             "type": "section",

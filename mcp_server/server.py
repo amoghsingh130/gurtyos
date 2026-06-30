@@ -6,9 +6,15 @@ before/after. Run standalone:  python -m mcp_server.server
 """
 from __future__ import annotations
 
+import logging
+
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server import scoring
+
+# This server runs as a stdio subprocess. Its INFO-level "Processing request of type …"
+# chatter only adds noise to the parent's captured stderr; quiet it to WARNING.
+logging.getLogger("mcp").setLevel(logging.WARNING)
 
 mcp = FastMCP("accessibility-scorer")
 

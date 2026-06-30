@@ -9,6 +9,7 @@ place makes MCP genuinely load-bearing in one audited spot instead of two copies
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from contextlib import asynccontextmanager
@@ -91,21 +92,44 @@ async def run_loop(
         final = None
         answer_msg = None
         tool_calls = 0
-        async for message in runner:
-            for blk in message.content:
-                if getattr(blk, "type", None) == "tool_use":
-                    tool_calls += 1
-                    if on_step:
-                        on_step(blk.name)
-            if guard is not None and getattr(message, "usage", None) is not None:
-                guard.record(model, message.usage)
-            final = message
-            # Keep the last message that actually carries the structured answer, so a
-            # trailing tool-call turn (e.g. when the iteration cap is hit mid-audit)
-            # doesn't blank the result.
-            if getattr(message, "parsed", None) is not None:
-                answer_msg = message
-    return _extract(answer_msg or final, field), tool_calls
+
+        async def _drive():
+            nonlocal final, answer_msg, tool_calls
+            async for message in runner:
+                for blk in message.content:
+                    if getattr(blk, "type", None) == "tool_use":
+                        tool_calls += 1
+                        if on_step:
+                            on_step(blk.name)
+                if guard is not None and getattr(message, "usage", None) is not None:
+                    guard.record(model, message.usage)
+                final = message
+                # Keep the last message that actually carries the structured answer, so a
+                # trailing tool-call turn (e.g. when the iteration cap is hit mid-audit)
+                # doesn't blank the result.
+                if getattr(message, "parsed", None) is not None:
+                    answer_msg = message
+
+        # Bound the whole loop: the MCP scorer's stdio transport can deadlock mid-call
+        # (subprocess blocks at 0% CPU and never returns). On timeout we stop iterating
+        # and fall back to the best draft captured so far — by the time a wedge hits, the
+        # agent has usually produced a solid structured answer already.
+        try:
+            await asyncio.wait_for(_drive(), timeout=settings.agent_loop_timeout_s)
+        except asyncio.TimeoutError:
+            if on_step:
+                on_step("audit timed out — returning best draft")
+
+    out = _extract(answer_msg or final, field) if (answer_msg or final) else ""
+    if not out.strip():
+        # No usable text — e.g. the loop hit the iteration cap or timeout on a trailing
+        # tool-call turn before the agent emitted its final answer. Surface it so callers
+        # post a graceful fallback instead of a 0-length Slack block (invalid_blocks).
+        raise RuntimeError(
+            f"agent loop produced no usable output "
+            f"(<= {max_iterations} iters / {settings.agent_loop_timeout_s}s)"
+        )
+    return out, tool_calls
 
 
 def _extract(message, field: str) -> str:

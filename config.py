@@ -76,6 +76,12 @@ class Settings:
     # give it generous headroom so a brief overload self-heals instead of erroring.
     anthropic_max_retries: int = 5
 
+    # Wall-clock ceiling on a single draft→audit→revise agent loop. The MCP scorer's
+    # stdio transport can deadlock mid-call (subprocess blocks at 0% CPU); this bounds
+    # the loop so it falls back to the best draft produced so far instead of hanging a
+    # whole Slack interaction forever. See llm/mcp_agent.run_loop.
+    agent_loop_timeout_s: int = 30
+
     prefs_db_path: str = "prefs.db"
 
     # Spend guardrails (app-side; the console spend limit is the real hard stop).
@@ -106,6 +112,7 @@ def load_settings() -> Settings:
         model_rewrite=_str_env("MODEL_REWRITE", "claude-haiku-4-5"),
         model_digest=_str_env("MODEL_DIGEST", "claude-sonnet-4-6"),
         anthropic_max_retries=_int_env("ANTHROPIC_MAX_RETRIES", 5),
+        agent_loop_timeout_s=_int_env("AGENT_LOOP_TIMEOUT_S", 30),
         max_spend_usd=_float_env("MAX_SPEND_USD", 8.0),
         max_calls_per_day=_int_env("MAX_CALLS_PER_DAY", 300),
         enable_task_stream=_bool_env("ENABLE_TASK_STREAM", True),
