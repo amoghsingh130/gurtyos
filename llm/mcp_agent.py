@@ -120,16 +120,12 @@ async def run_loop(
             if on_step:
                 on_step("audit timed out — returning best draft")
 
-    out = _extract(answer_msg or final, field) if (answer_msg or final) else ""
-    if not out.strip():
-        # No usable text — e.g. the loop hit the iteration cap or timeout on a trailing
-        # tool-call turn before the agent emitted its final answer. Surface it so callers
-        # post a graceful fallback instead of a 0-length Slack block (invalid_blocks).
-        raise RuntimeError(
-            f"agent loop produced no usable output "
-            f"(<= {max_iterations} iters / {settings.agent_loop_timeout_s}s)"
-        )
-    return out, tool_calls
+    # May be "" if the loop hit the iteration cap / timeout on a trailing tool-call turn
+    # before the agent emitted its final answer. Don't raise — let callers handle empty
+    # gracefully in the way that fits them: the rewrite posts a fallback instead of a
+    # 0-length Slack block (invalid_blocks), and the digest declines cleanly ("not enough
+    # to summarize"). An empty result is a normal outcome, not an exception.
+    return _extract(answer_msg or final, field), tool_calls
 
 
 def _extract(message, field: str) -> str:

@@ -39,9 +39,10 @@ REWRITE_SYSTEM = (
     "commentary about your process."
 ) + sanitize.INJECTION_GUARD
 
-MAX_ITERATIONS = 4  # the agent needs enough turns to emit its FINAL structured rewrite
-# after auditing — too low (e.g. 2) can cut it off mid-audit, yielding an empty result.
-# The wall-clock timeout in llm/mcp_agent.run_loop is the guard against a wedge.
+MAX_ITERATIONS = 8  # the agent must audit AND still emit its FINAL structured rewrite;
+# too low (e.g. 2-4) can cut it off mid-audit, yielding an empty result. The cap is a
+# max, not a target (it converges in 2-3), and the wall-clock timeout in
+# llm/mcp_agent.run_loop is the real guard against a wedge.
 
 
 class _FinalRewrite(BaseModel):

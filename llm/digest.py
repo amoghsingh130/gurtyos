@@ -45,8 +45,9 @@ _RETRY_NUDGE = (
     "headings. Do not include audit notes, status updates, or words like 'revising'."
 )
 
-MAX_ITERATIONS = 4  # see llm/rewrite.py; the wall-clock timeout in mcp_agent.run_loop
-# is the real guard against a wedged MCP scorer.
+MAX_ITERATIONS = 8  # the agent must audit (up to ~twice) AND still emit its final summary;
+# too low cuts it off mid-audit → empty digest. The wall-clock timeout in
+# mcp_agent.run_loop is the real guard against a wedged MCP scorer.
 
 
 def _looks_like_summary(md: str) -> bool:

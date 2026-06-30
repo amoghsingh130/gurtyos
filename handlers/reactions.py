@@ -125,6 +125,15 @@ def _handle_rewrite(client, settings: Settings, guard: Guardrails, prefs: PrefsS
             channel=channel, thread_ts=ts, text="⚠️ Couldn't rewrite that thread.")
         return
 
+    if not (result.text or "").strip():
+        # The agent loop hit its cap/timeout before emitting a final rewrite. Post a
+        # plain fallback rather than a 0-length Slack section block (invalid_blocks).
+        log.warning("empty rewrite for %s/%s — posting fallback", channel, ts)
+        client.chat_postMessage(
+            channel=channel, thread_ts=ts,
+            text="⚠️ Couldn't produce a plain-language version — try again.")
+        return
+
     text_out, blocks_out = _rewrite_message(result, f"{channel}:{ts}")
     client.chat_postMessage(channel=channel, thread_ts=ts, text=text_out, blocks=blocks_out)
 
